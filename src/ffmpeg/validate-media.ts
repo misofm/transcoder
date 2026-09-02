@@ -320,8 +320,12 @@ export const parseTimeline = (
       typeof packet["duration_time"] === "string"
         ? packet["duration_time"]
         : undefined;
-    if (pts === undefined || dts === undefined || duration === undefined)
-      throw invalid(subject, "Packet integer timestamps are missing");
+    if (pts === undefined)
+      throw invalid(subject, "Packet integer presentation timestamp is missing");
+    if (dts === undefined)
+      throw invalid(subject, "Packet integer decode timestamp is missing");
+    if (duration === undefined)
+      throw invalid(subject, "Packet integer duration is missing");
     if (pos === undefined || pos < 0)
       throw invalid(subject, "Packet byte position is missing or negative");
     if (duration <= 0)
