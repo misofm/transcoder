@@ -481,6 +481,18 @@ test("real FFmpeg creates one aligned three-rendition plaintext ladder", async (
             (document.querySelector("audio") as HTMLAudioElement).readyState >=
             2,
         );
+        const autoLevel = audition.getByRole("button", { name: "Auto" });
+        const highLevel = audition.getByRole("button", { name: "256 kbps" });
+        expect(await autoLevel.getAttribute("aria-pressed")).toBe("true");
+        await highLevel.click();
+        expect(await highLevel.getAttribute("aria-pressed")).toBe("true");
+        await audition.waitForFunction(() =>
+          document
+            .querySelector('[data-level="2"]')
+            ?.classList.contains("is-active"),
+        );
+        await autoLevel.click();
+        expect(await autoLevel.getAttribute("aria-pressed")).toBe("true");
         await audition.close();
       } finally {
         await browser.close();

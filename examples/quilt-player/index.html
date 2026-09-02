@@ -7,7 +7,7 @@
       http-equiv="Content-Security-Policy"
       content="default-src 'none'; script-src 'self'; style-src 'self'; media-src blob:; connect-src blob:; worker-src blob:; img-src data:; font-src 'none'; base-uri 'none'; form-action 'none'"
     />
-    <title>Quilt Listening Room</title>
+    <title>Quilt player</title>
     <link rel="stylesheet" href="./styles.css" />
     <script
       src="./hls.min.js"
@@ -18,20 +18,13 @@
   </head>
   <body>
     <main>
-      <header class="masthead">
-        <p class="eyebrow">MISO / LOCAL AUDITION TOOL</p>
-        <h1>Quilt<br />Listening Room</h1>
-        <p class="lede">
-          Inspect, unlock, and audition an encrypted AAC ladder without
-          uploading its media or key.
-        </p>
+      <header>
+        <h1>Quilt player</h1>
+        <p>Local verifier and audio player. No files or keys are uploaded.</p>
       </header>
 
       <section class="workbench" aria-labelledby="setup-title">
-        <div class="section-heading">
-          <span>01</span>
-          <h2 id="setup-title">Load the artifact</h2>
-        </div>
+        <h2 id="setup-title">Open artifact</h2>
 
         <label class="drop-zone" id="drop-zone">
           <input
@@ -41,8 +34,7 @@
             multiple
             aria-describedby="folder-help"
           />
-          <span class="drop-mark" aria-hidden="true">⌁</span>
-          <strong>Choose a Quilt artifact folder</strong>
+          <strong>Choose Quilt directory</strong>
           <small id="folder-help"
             >Select the generation directory containing index.json and all
             patches.</small
@@ -88,36 +80,32 @@
       </section>
 
       <section class="deck" id="deck" hidden aria-labelledby="player-title">
-        <div class="section-heading">
-          <span>02</span>
-          <h2 id="player-title">Encrypted ladder</h2>
-        </div>
-        <div class="record-card">
-          <div class="disc" aria-hidden="true"><i></i></div>
-          <div class="record-copy">
-            <p class="generation" id="generation"></p>
-            <h3 id="recording-id"></h3>
-            <dl>
-              <div>
-                <dt>Renditions</dt>
-                <dd id="rendition-count"></dd>
-              </div>
-              <div>
-                <dt>Segments</dt>
-                <dd id="segment-count"></dd>
-              </div>
-              <div>
-                <dt>Network</dt>
-                <dd id="network"></dd>
-              </div>
-              <div>
-                <dt>Index SHA-256</dt>
-                <dd id="index-hash"></dd>
-              </div>
-            </dl>
+        <h2 id="player-title">Playback</h2>
+        <p class="generation" id="generation"></p>
+        <dl>
+          <div>
+            <dt>Recording</dt>
+            <dd id="recording-id"></dd>
           </div>
-        </div>
+          <div>
+            <dt>Renditions</dt>
+            <dd id="rendition-count"></dd>
+          </div>
+          <div>
+            <dt>Segments</dt>
+            <dd id="segment-count"></dd>
+          </div>
+          <div>
+            <dt>Network</dt>
+            <dd id="network"></dd>
+          </div>
+          <div>
+            <dt>Index SHA-256</dt>
+            <dd id="index-hash"></dd>
+          </div>
+        </dl>
         <audio id="audio" controls preload="metadata"></audio>
+        <p class="level-label">Bitrate</p>
         <div class="level-strip" id="level-strip"></div>
         <button class="secondary-action" id="close-button" type="button">
           Close &amp; clear memory

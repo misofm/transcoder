@@ -395,12 +395,20 @@ const bootstrap = () => {
         if (data.fatal)
           setStatus("error", "Playback error", `${data.type}: ${data.details}`);
       });
+      let selectedLevel = -1;
+      let activeLevel = -1;
+      const renderLevels = () => {
+        document.querySelectorAll("#level-strip button").forEach((element) => {
+          const level = Number(element.dataset.level);
+          const selected = level === selectedLevel;
+          element.classList.toggle("is-selected", selected);
+          element.classList.toggle("is-active", level === activeLevel);
+          element.setAttribute("aria-pressed", String(selected));
+        });
+      };
       hls.on(globalThis.Hls.Events.LEVEL_SWITCHED, (_event, data) => {
-        document
-          .querySelectorAll("#level-strip span")
-          .forEach((element, index) =>
-            element.classList.toggle("is-active", index === data.level),
-          );
+        activeLevel = data.level;
+        renderLevels();
       });
       hls.loadSource(masterUrl);
       hls.attachMedia(audio);
@@ -418,12 +426,26 @@ const bootstrap = () => {
         await sha256(indexBytes),
       );
       document.querySelector("#level-strip").replaceChildren(
-        ...index.renditions.map((rendition) => {
-          const item = document.createElement("span");
-          item.textContent = rendition.id.replace("aac-", "") + " kbps";
+        ...[
+          { label: "Auto", level: -1 },
+          ...index.renditions.map((rendition, level) => ({
+            label: rendition.id.replace("aac-", "") + " kbps",
+            level,
+          })),
+        ].map(({ label, level }) => {
+          const item = document.createElement("button");
+          item.type = "button";
+          item.dataset.level = String(level);
+          item.textContent = label;
+          item.addEventListener("click", () => {
+            selectedLevel = level;
+            hls.currentLevel = level;
+            renderLevels();
+          });
           return item;
         }),
       );
+      renderLevels();
       deck.hidden = false;
       deck.scrollIntoView({ behavior: "smooth", block: "start" });
       setStatus(
