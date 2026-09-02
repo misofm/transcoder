@@ -180,17 +180,21 @@ nonce reuse across repackaging is forbidden. A publish checkpoint must bind the
 nonce, Seal ciphertext digest, exact patch list, each patch digest, Quilt Blob
 ID, and on-chain pointer mutation.
 
-### Current policy readiness gate
+### Current Record policy semantics
 
-The currently published `miso_record_seal_policy` revision deliberately aborts
-every approval with `EOwnershipUnprovable`: after `Record` gained `store`, an
-immutable `&Record` can also be shared or frozen and no longer proves address
-ownership. This format does not weaken or work around that invariant. Protected
-transcodes may be packaged for local conformance testing, but must not be
-presented as playable until the Move layer exposes a sound transfer-aware
-access capability or custody proof and a replacement policy package is
-published. The player must surface this as authorization unavailable, never as
-a corrupt segment or retry loop.
+The current `miso_record_seal_policy` treats the ability to supply a usable
+`&Record` as the entitlement. Address-owned Records can be supplied only by
+their owner. If a Record is shared or frozen, other callers can intentionally
+supply its reference and satisfy the policy. The policy then binds the Record
+to its Release; Recording and Composition approvals additionally validate the
+selected track member and supplied object identity.
+
+This format neither changes nor supplements those authorization semantics. The
+Miso key loader must invoke the policy matching the protected object and treat
+policy rejection as authorization failure, never as a corrupt segment or an
+unbounded retry. Production readiness depends on the deployed policy package,
+Seal key material, certified Quilt pointer, loader, and player integration,
+which remain outside this local transcoder.
 
 ## `index.json`
 
@@ -324,8 +328,8 @@ the result exceeds 666.
 2. Fetch and strictly validate `index.json` from that Quilt.
 3. Verify the fetched `index.json` against the on-chain `indexSha256`, then
    fetch `key.seal` and verify its bytes and digest against the descriptor.
-4. Build the Seal approval transaction with the connected user's owned Record
-   and the Recording-bound identity parsed from the Seal object.
+4. Build the Seal approval transaction with a usable Record reference and the
+   Recording-bound identity parsed from the Seal object.
 5. Seal-decrypt the 32-byte root key once and keep it only in memory.
 6. Start hls.js with Miso playlist, fragment, and key loaders rooted at the
    trusted Quilt ID.

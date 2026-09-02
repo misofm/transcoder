@@ -44,6 +44,23 @@ test("FFmpeg conformance uses one digest-pinned reference image", async () => {
   );
 });
 
+test("documentation tracks current Record Seal reference semantics", async () => {
+  const readme = await readFile(
+    new URL("../README.md", import.meta.url),
+    "utf8",
+  );
+  const contract = await readFile(
+    new URL("../docs/aac-transcode-quilt-v1.md", import.meta.url),
+    "utf8",
+  );
+  for (const documentation of [readme, contract]) {
+    expect(documentation).toMatch(/usable\s+`&Record`/u);
+    expect(documentation).toContain("shared or frozen");
+    expect(documentation).not.toContain("EOwnershipUnprovable");
+  }
+  expect(contract).not.toContain("user's owned Record");
+});
+
 const sourceFiles = async (root: string): Promise<ReadonlyArray<string>> => {
   const entries = await readdir(root, { withFileTypes: true });
   const nested = await Promise.all(
