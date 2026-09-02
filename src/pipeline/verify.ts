@@ -81,7 +81,8 @@ const verifyUnsafe = async (
     throw failure(artifact.rootPath, "Artifact inventory mismatch");
   if (
     artifact.patchCount !== identifiers.length ||
-    index.patchCount !== identifiers.length
+    index.patchCount !== identifiers.length ||
+    artifact.patches.length !== identifiers.length
   ) {
     throw failure("patchCount", "Patch count mismatch");
   }
