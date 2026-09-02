@@ -20,7 +20,7 @@ See [the normative AAC Quilt v1 contract](docs/aac-transcode-quilt-v1.md). `fina
 
 ## Security and scope
 
-This package performs local computation only. It does not use Sui, Seal, Walrus, Quilt publication/certification, or on-chain pointer mutation; `keySeal` is opaque bytes. The current `miso_record_seal_policy` remains fail-closed with `EOwnershipUnprovable`, so generated artifacts must not be presented as protected-playback-ready.
+This package performs local computation only. It does not use Sui, Seal, Walrus, Quilt publication/certification, or on-chain pointer mutation; `keySeal` is opaque bytes. The current `miso_record_seal_policy` treats the ability to supply a usable `&Record` as the entitlement: address-owned Records can be supplied only by their owner, while shared or frozen Records can intentionally be supplied by other callers. Whether protected playback is production-ready depends on the complete policy deployment, key-loader, publication, and player integration outside this package.
 
 FFmpeg is a native parser, not a hostile-media sandbox. Production systems processing untrusted input need an OS/container isolation boundary. This package neither distributes nor links FFmpeg.
 
