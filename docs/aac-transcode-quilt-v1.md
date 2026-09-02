@@ -331,8 +331,20 @@ Adaptive bitrate switching requires no additional key-custody request.
 ## Publication invariants
 
 - Encode every rendition from the same decoded master timeline.
-- Reject clipping, channel-count drift, sample-rate drift, missing end tags,
-  non-monotonic timestamps, or variant duration disagreement.
+- Preserve the archival input. First encode one unity-gain aligned ladder and
+  measure each decoded rendition with the pinned FFmpeg 8.1.2 `loudnorm`
+  analysis meter plus an exact streaming `f32le` sample scan. Finite preview
+  overshoot is evidence; non-finite PCM is always invalid.
+- Accept the unity ladder unchanged only when every rendition reports at most
+  `-1.01 dBTP` and its exact decoded absolute sample peak is at most `1.0`.
+  Otherwise plan one shared non-positive gain from the maximum preview true
+  peak toward `-1.50 dBTP`, flooring to the next `0.10 dB`, and apply it once
+  with double precision before the three-way split. Independently validate the
+  second complete ladder and fail closed without a limiter or third encode if
+  either ceiling is missed. `loudnorm` never enters a delivery encode.
+- Reject channel-count drift, sample-rate drift, missing end tags,
+  non-monotonic timestamps, variant duration disagreement, malformed meter
+  output, or final decoded clipping.
 - Generate plaintext fMP4 HLS with FFmpeg, then AES-CBC-encrypt each final media
   segment with the sequence-derived IV. Insert `#EXT-X-KEY` only after the
   plaintext `#EXT-X-MAP`; do not use FFmpeg's unsupported encrypted-fMP4 path.

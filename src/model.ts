@@ -50,14 +50,37 @@ export interface ToolchainFingerprint {
   readonly sha256: string;
 }
 
+export interface AudioMeasurement {
+  /** Null denotes the meter's canonical negative-infinity result for silence. */
+  readonly integratedLoudnessCentiLufs: number | null;
+  /** Null denotes the meter's canonical negative-infinity result for silence. */
+  readonly truePeakCentiDbtp: number | null;
+  /** Null denotes an all-zero decoded stream. */
+  readonly samplePeakCentiDbfs: number | null;
+}
+
+export interface RenditionAudioMeasurement extends AudioMeasurement {
+  readonly id: RenditionId;
+}
+
+export interface PreparedAudioEvidence {
+  readonly policyId: "miso.aac-codec-preview/1";
+  readonly appliedGainCentiDb: number;
+  readonly source: AudioMeasurement;
+  readonly preview: readonly RenditionAudioMeasurement[];
+  readonly output: readonly RenditionAudioMeasurement[];
+}
+
 export interface PreparedTranscode {
   readonly prepareDigest: string;
+  readonly resultDigest: string;
   readonly rootPath: string;
   readonly sourceSha256: string;
   readonly durationMs: number;
   readonly sampleRateHz: 44100 | 48000;
   readonly segmentTargetMs: number;
   readonly toolchain: ToolchainFingerprint;
+  readonly audio: PreparedAudioEvidence;
 }
 
 export interface FileDescriptor {

@@ -98,7 +98,7 @@ const generationDigest = (
 ): string => {
   const hash = createHash("sha256");
   hash.update("miso.transcoder.generation/1\0");
-  hash.update(request.prepared.prepareDigest, "utf8");
+  hash.update(request.prepared.resultDigest, "utf8");
   hash.update(request.recordingId, "utf8");
   hash.update(request.network, "utf8");
   hash.update(material.generationNonce);
@@ -445,6 +445,7 @@ const generationCheckpointBytes = (
         schema: "miso.transcoder-generation/1",
         generationDigest: digest,
         prepareDigest: request.prepared.prepareDigest,
+        resultDigest: request.prepared.resultDigest,
         generationNonce: Buffer.from(material.generationNonce).toString(
           "base64url",
         ),
