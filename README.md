@@ -2,6 +2,12 @@
 
 Local, deterministic AAC-LC fMP4 HLS preparation and Quilt artifact construction for Miso. The package is an Effect v4 ESM library for Node 22/24 and Bun 1.4; it does not ship a command-line binary or FFmpeg.
 
+This package is experimental and pre-launch. Install it with an exact version together with its exact Effect v4 peers:
+
+```sh
+npm install --save-exact @misofm/transcoder@0.1.0 effect@4.0.0-rc.112 @effect/platform-node@4.0.0-rc.112
+```
+
 The pipeline has two explicit stages:
 
 1. A codec-preview pass creates one unity-gain aligned plaintext 96/160/256 kbit/s ladder from a single decoded timeline. If every decoded rendition already satisfies the delivery ceiling it is promoted unchanged. Otherwise the largest measured true peak determines one shared, downward-only gain and the complete ladder is encoded once more in fresh staging.
