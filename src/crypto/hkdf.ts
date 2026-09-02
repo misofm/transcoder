@@ -1,9 +1,12 @@
-import { createHash, hkdfSync } from "node:crypto";
+import { createHash, createHmac, hkdfSync } from "node:crypto";
 
 import type { RenditionId } from "../model.js";
 
 const DOMAIN = new TextEncoder().encode("miso.aac-transcode-quilt/1\0");
 const INFO_PREFIX = "hls-aes-128\0";
+const KEY_ID_DOMAIN = new TextEncoder().encode(
+  "miso.aac-transcode-quilt/key-id/1\0",
+);
 
 export const decodeRecordingId = (value: string): Uint8Array => {
   if (!/^0x[0-9a-f]{64}$/.test(value)) {
@@ -33,4 +36,20 @@ export const deriveRenditionKey = (
     .digest();
   const info = new TextEncoder().encode(`${INFO_PREFIX}${renditionId}`);
   return new Uint8Array(hkdfSync("sha256", rootKey, salt, info, 16));
+};
+
+export const deriveRootKeyId = (
+  rootKey: Uint8Array,
+  recordingId: string,
+  generationNonce: Uint8Array,
+): string => {
+  if (rootKey.byteLength !== 32)
+    throw new TypeError("rootKey must contain exactly 32 bytes");
+  if (generationNonce.byteLength !== 32)
+    throw new TypeError("generationNonce must contain exactly 32 bytes");
+  return createHmac("sha256", rootKey)
+    .update(KEY_ID_DOMAIN)
+    .update(decodeRecordingId(recordingId))
+    .update(generationNonce)
+    .digest("hex");
 };

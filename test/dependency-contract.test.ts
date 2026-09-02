@@ -44,7 +44,7 @@ test("FFmpeg conformance uses one digest-pinned reference image", async () => {
   );
 });
 
-test("documentation tracks current Record Seal reference semantics", async () => {
+test("the library contract keeps external key custody outside the Quilt", async () => {
   const readme = await readFile(
     new URL("../README.md", import.meta.url),
     "utf8",
@@ -54,11 +54,10 @@ test("documentation tracks current Record Seal reference semantics", async () =>
     "utf8",
   );
   for (const documentation of [readme, contract]) {
-    expect(documentation).toMatch(/usable\s+`&Record`/u);
-    expect(documentation).toContain("shared or frozen");
-    expect(documentation).not.toContain("EOwnershipUnprovable");
+    expect(documentation).not.toMatch(/keySeal|key\.seal|sealPlaintextBytes/u);
   }
-  expect(contract).not.toContain("user's owned Record");
+  expect(readme).toContain("External key custody");
+  expect(contract).toContain("key.external");
 });
 
 const sourceFiles = async (root: string): Promise<ReadonlyArray<string>> => {
@@ -86,6 +85,8 @@ test("library sources have a silent observer boundary and no deployment SDK", as
   const root = new URL("../src", import.meta.url).pathname;
   for (const file of await sourceFiles(root)) {
     const source = await readFile(file, "utf8");
-    expect(source).not.toMatch(/console\.|process\.(?:stdout|stderr)|@mysten/u);
+    expect(source).not.toMatch(
+      /console\.|process\.(?:stdout|stderr)|@mysten|keySeal|key\.seal/u,
+    );
   }
 });

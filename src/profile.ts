@@ -1,5 +1,5 @@
 export const MAX_PATCHES = 666;
-export const FIXED_PATCHES = 3;
+export const FIXED_PATCHES = 2;
 export const RENDITION_FIXED_PATCHES = 2;
 export const MAX_SEGMENTS_PER_RENDITION = 219;
 export const DEFAULT_SEGMENT_TARGET_MS = 6_000;

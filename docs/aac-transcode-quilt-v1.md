@@ -6,8 +6,9 @@ the packager, on-chain pointer, and player adapter become public contracts.
 ## Decision
 
 Store one immutable Quilt per Recording transcode generation. Put the complete
-AAC bitrate ladder, its playlists, initialization data, and one Seal-wrapped
-root key in that Quilt.
+AAC bitrate ladder, its playlists, and initialization data in that Quilt. Key
+custody is external: the Quilt contains neither a plaintext root key nor a key
+envelope.
 
 Do not create one Quilt per bitrate in the normal case. All renditions:
 
@@ -18,13 +19,13 @@ Do not create one Quilt per bitrate in the normal case. All renditions:
 
 That is the workload Quilt is designed to amortize. QuiltV1 supports at most
 666 patches. With three renditions and six-second segments, a 193-second track
-uses about 108 patches, including manifests, init segments, and the key
-envelope. The longest current Between the Doors track therefore uses less than
+uses about 107 patches, including manifests and init segments. The longest
+current Between the Doors track therefore uses less than
 one sixth of the limit.
 
 A generation that does not fit must fail before encoding. The packager may
 first increase segment duration to at most ten seconds. It must not silently
-remove a required rendition. Splitting by rendition is an explicit v2/fallback
+remove a required rendition. Splitting by rendition is an explicit fallback
 layout, not an automatic behavior: multiple Quilts lose atomic publication and
 renewal and need a separate root descriptor.
 
@@ -69,7 +70,6 @@ Identifiers are flat, ASCII, and generated before Quilt encoding:
 ```text
 index.json
 master.m3u8
-key.seal
 aac-096.m3u8
 aac-096-init.mp4
 aac-096-00000.m4s
@@ -91,12 +91,10 @@ Blob ID returned at publication and resolves each identifier with the Walrus
 media identity.
 
 `index.json`, playlists, and init segments are public metadata. Media fragments
-are encrypted. `key.seal` is the raw canonical Seal `EncryptedObject` bytes; it
-is not JSON and never contains a plaintext key. The on-chain transcode
-reference must bind the Quilt Blob ID and the SHA-256 of the exact `index.json`
-bytes. That digest makes the descriptor—and the key and fragment digests it
-contains—part of the trusted pointer instead of trusting an arbitrary HTTP
-aggregator response.
+are encrypted. The on-chain transcode reference must bind the Quilt Blob ID and
+the SHA-256 of the exact `index.json` bytes. That digest makes the descriptor
+and fragment digests part of the trusted pointer instead of trusting an
+arbitrary HTTP aggregator response.
 
 All patches share the Quilt's storage lifetime. Updating any rendition creates
 a new complete generation and an atomic pointer change. Published Quilts are
@@ -104,18 +102,25 @@ never edited in place.
 
 ## Encryption profile
 
-Generate a fresh random 32-byte root data-encryption key and a separate random
-32-byte generation nonce for every transcode generation. Seal encrypts only
-that root key against the existing canonical Recording-session identity:
+The caller generates a fresh random 32-byte root data-encryption key and a
+separate random 32-byte generation nonce for every transcode generation. It
+must durably protect the root key before finalization so a crash after artifact
+promotion cannot create ciphertext whose key exists only in a lost return
+value. The transcoder accepts a working copy, consumes and best-effort zeroes
+it, and returns only the artifact. Protection, persistence, authorization, and
+recovery of the root key are outside this contract.
+
+`index.json` records a non-secret `keyId` commitment:
 
 ```text
-[schema=1 | kind=1 | recordGateId:32 | recordingId:32 | generationNonce:32]
+keyId = hex(HMAC-SHA256(
+  key = rootKey,
+  data = UTF8("miso.aac-transcode-quilt/key-id/1\0") || recordingId || generationNonce
+))
 ```
 
-Store the resulting canonical Seal ciphertext as `key.seal`. Reusing kind 1 is
-intentional: the Move policy already treats it as the domain for encrypted
-assets belonging to a Recording, while the fresh nonce separates mixer and
-transcode keys.
+This binds resumability and artifact verification to the caller's key without
+placing that key in the Quilt.
 
 Derive one HLS AES-128 key per rendition:
 
@@ -138,7 +143,7 @@ for every segment.
 Each media playlist declares:
 
 ```m3u8
-#EXT-X-KEY:METHOD=AES-128,URI="key.seal?rendition=aac-096"
+#EXT-X-KEY:METHOD=AES-128,URI="key.external?generation=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA&rendition=aac-096"
 ```
 
 The plaintext `#EXT-X-MAP` must appear before that key tag, so the fMP4 init
@@ -155,16 +160,17 @@ digests. A local conformance probe confirmed that FFmpeg can decode the
 post-processed AES-128 playlist back to the original seven-second test stream.
 Never ask FFmpeg to choose or write the production key.
 
-The query selects the HKDF rendition domain; it does not select another stored
-key. A Miso key loader fetches `key.seal` once, asks Seal to decrypt the root
-key after the on-chain Record policy succeeds, derives the requested 16-byte
-rendition key locally, and supplies those bytes to the HLS engine's key-loader
-callback. The raw key is never sent by an HTTP server or written to storage.
+The query binds a request to the generation and selects the HKDF rendition
+domain; it does not identify a stored Quilt patch. An application key loader
+obtains the protected root key through its external authorization system,
+checks `keyId`, derives the requested 16-byte rendition key locally, and
+supplies those bytes to the HLS engine's key-loader callback. The raw key is
+never served as an ordinary public Quilt patch.
 
 This keeps segment encryption inside HLS's interoperable AES-128 profile and
 lets hls.js perform its normal fragment decryption. Access control still
-requires the Miso loader: an unmodified player receives a Seal ciphertext where
-it expects 16 raw key bytes and cannot play the stream. Native Safari playback
+requires an application loader: the virtual `key.external` URI is not an HTTP
+key endpoint. Native Safari playback
 cannot use this loader. Protected playback therefore requires hls.js over
 MSE/Managed Media Source; supporting native HLS would require a trusted key
 endpoint or FairPlay, neither of which is part of this format.
@@ -175,26 +181,11 @@ must verify both before handing bytes to hls.js. The trusted on-chain pointer to
 the content-addressed Quilt Blob ID is the root of integrity. A player must not
 accept a Quilt ID supplied only by the untrusted `index.json` it is fetching.
 
-The generation nonce is part of the Seal identity and the HKDF salt. Key and
+The generation nonce is part of the HKDF salt and every virtual key URI. Key and
 nonce reuse across repackaging is forbidden. A publish checkpoint must bind the
-nonce, Seal ciphertext digest, exact patch list, each patch digest, Quilt Blob
-ID, and on-chain pointer mutation.
-
-### Current Record policy semantics
-
-The current `miso_record_seal_policy` treats the ability to supply a usable
-`&Record` as the entitlement. Address-owned Records can be supplied only by
-their owner. If a Record is shared or frozen, other callers can intentionally
-supply its reference and satisfy the policy. The policy then binds the Record
-to its Release; Recording and Composition approvals additionally validate the
-selected track member and supplied object identity.
-
-This format neither changes nor supplements those authorization semantics. The
-Miso key loader must invoke the policy matching the protected object and treat
-policy rejection as authorization failure, never as a corrupt segment or an
-unbounded retry. Production readiness depends on the deployed policy package,
-Seal key material, certified Quilt pointer, loader, and player integration,
-which remain outside this local transcoder.
+nonce, `keyId`, exact patch list, each patch digest, Quilt Blob ID, and pointer
+mutation. Authorization failures are application errors, not corrupt-segment
+errors, and must not trigger an unbounded retry.
 
 ## `index.json`
 
@@ -215,17 +206,13 @@ Schema cannot express all of them safely.
   "recordingId": "0x0000000000000000000000000000000000000000000000000000000000000000",
   "generation": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
   "masterPlaylist": "master.m3u8",
-  "key": {
-    "identifier": "key.seal",
-    "bytes": 400,
-    "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
-  },
   "segmentTargetMs": 6000,
-  "patchCount": 12,
+  "patchCount": 11,
   "encryption": {
     "scheme": "hls-aes-128-cbc-hkdf/1",
     "kdf": "hkdf-sha256",
-    "sealPlaintextBytes": 32
+    "rootKeyBytes": 32,
+    "keyId": "0000000000000000000000000000000000000000000000000000000000000000"
   },
   "renditions": [
     {
@@ -314,33 +301,32 @@ segments in every rendition must describe the same time interval.
 The descriptor's `patchCount` is exactly:
 
 ```text
-3 + sum(2 + rendition.segments.length)
+2 + sum(2 + rendition.segments.length)
 ```
 
-The fixed three patches are `index.json`, `master.m3u8`, and `key.seal`; each
-rendition adds one media playlist and one init segment. Publication fails when
-the result exceeds 666.
+The fixed two patches are `index.json` and `master.m3u8`; each rendition adds
+one media playlist and one init segment. Publication fails when the result
+exceeds 666.
 
 ## Read path
 
 1. Read the trusted Quilt Blob ID from the Recording's on-chain transcode
    reference.
 2. Fetch and strictly validate `index.json` from that Quilt.
-3. Verify the fetched `index.json` against the on-chain `indexSha256`, then
-   fetch `key.seal` and verify its bytes and digest against the descriptor.
-4. Build the Seal approval transaction with a usable Record reference and the
-   Recording-bound identity parsed from the Seal object.
-5. Seal-decrypt the 32-byte root key once and keep it only in memory.
-6. Start hls.js with Miso playlist, fragment, and key loaders rooted at the
+3. Verify the fetched `index.json` against the trusted `indexSha256`.
+4. Obtain the 32-byte root key through the application's external key-custody
+   and authorization flow, keep it only in memory, and verify `keyId`.
+5. Start hls.js with application playlist, fragment, and key loaders rooted at the
    trusted Quilt ID.
-7. On a key request, derive and return the requested rendition key locally.
-8. On a segment response, verify ciphertext length and SHA-256 before hls.js
+6. On a key request, validate its generation and rendition parameters, then
+   derive and return the requested rendition key locally.
+7. On a segment response, verify ciphertext length and SHA-256 before hls.js
    decrypts and appends it.
-9. Zero best-effort byte copies and destroy loader/key state on sign-out,
+8. Zero best-effort byte copies and destroy loader/key state on sign-out,
    network change, Record change, or player teardown.
 
-One Seal authorization unlocks the complete bitrate ladder. Adaptive bitrate
-switching never causes another key-server request.
+One externally authorized root key unlocks the complete bitrate ladder.
+Adaptive bitrate switching requires no additional key-custody request.
 
 ## Publication invariants
 
@@ -391,9 +377,10 @@ patches preserve ordinary HLS scheduling and cache behavior.
 
 GCM would authenticate every fragment, but hls.js would need a custom fragment
 decryptor rather than its normal HLS AES pipeline, and native HLS would still
-be unavailable because Seal authorization is application-specific. V1 uses the
-standard HLS AES-128 construction plus mandatory ciphertext hashes. A future
-GCM profile should be a new schema, not an in-place algorithm substitution.
+be unavailable because authorization is application-specific. This contract
+uses the standard HLS AES-128 construction plus mandatory ciphertext hashes.
+Changing the algorithm requires an explicit contract change, not an in-place
+substitution.
 
 ## Sources
 
@@ -403,5 +390,4 @@ GCM profile should be a new schema, not an in-place algorithm substitution.
 - [Walrus TypeScript `WalrusFile` and `writeFiles` API](https://github.com/MystenLabs/ts-sdks/blob/main/packages/docs/content/walrus/index.mdx)
 - [RFC 8216: HTTP Live Streaming](https://www.rfc-editor.org/rfc/rfc8216)
 - [FFmpeg HLS muxer formats and AES-128 options](https://ffmpeg.org/ffmpeg-formats.html#hls-2)
-- [Seal overview and TypeScript SDK](https://github.com/MystenLabs/seal)
 - [hls.js custom loader API](https://github.com/video-dev/hls.js/blob/master/docs/API.md)

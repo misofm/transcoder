@@ -14,6 +14,6 @@ test("selects the smallest conservative integer-millisecond patch target", () =>
   expect(
     conservativeSegmentCount(justOverSixSecondBudget, selected!),
   ).toBeLessThanOrEqual(219);
-  expect(patchCountForSegments(219)).toBe(666);
+  expect(patchCountForSegments(219)).toBe(665);
   expect(chooseSegmentTargetMs(219 * 10000)).toBeUndefined();
 });

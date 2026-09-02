@@ -40,13 +40,13 @@ const index: QuiltIndex = {
   recordingId: `0x${hash}`,
   generation: "A".repeat(43),
   masterPlaylist: "master.m3u8",
-  key: { identifier: "key.seal", bytes: 1, sha256: hash },
   segmentTargetMs: 6000,
-  patchCount: 12,
+  patchCount: 11,
   encryption: {
     scheme: "hls-aes-128-cbc-hkdf/1",
     kdf: "hkdf-sha256",
-    sealPlaintextBytes: 32,
+    rootKeyBytes: 32,
+    keyId: hash,
   },
   renditions,
 };
@@ -58,7 +58,6 @@ test("serializes strict index and canonical patch ordering", () => {
   expect(canonicalIdentifiers(index)).toEqual([
     "index.json",
     "master.m3u8",
-    "key.seal",
     "aac-096.m3u8",
     "aac-096-init.mp4",
     "aac-096-00000.m4s",
@@ -73,7 +72,7 @@ test("serializes strict index and canonical patch ordering", () => {
 
 test("rejects unknown keys and cross-field mismatches", () => {
   expect(() => assertQuiltIndex({ ...index, extra: true })).toThrow();
-  expect(() => assertQuiltIndex({ ...index, patchCount: 13 })).toThrow();
+  expect(() => assertQuiltIndex({ ...index, patchCount: 12 })).toThrow();
   expect(() =>
     assertQuiltIndex({ ...index, renditions: renditions.slice(0, 2) }),
   ).toThrow();
@@ -101,7 +100,7 @@ test("rejects unknown keys and cross-field mismatches", () => {
     ],
   }));
   expect(() =>
-    assertQuiltIndex({ ...index, patchCount: 15, renditions: twoSegments }),
+    assertQuiltIndex({ ...index, patchCount: 14, renditions: twoSegments }),
   ).toThrow();
   expect(() =>
     assertQuiltIndex({

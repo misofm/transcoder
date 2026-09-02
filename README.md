@@ -11,16 +11,16 @@ FFmpeg and FFprobe paths must be explicit absolute paths. Every native launch us
 
 ## Package exports
 
-- `@misofm/transcoder` — models, typed errors, schema validation, and the `Transcoder` service.
+- `@misofm/transcoder` — models, typed errors, schema validation, key-derivation/commitment helpers, and the `Transcoder` service.
 - `@misofm/transcoder/node` — the live Node layer.
 - `@misofm/transcoder/schema` — the vendored schema and strict cross-field validator.
 - `@misofm/transcoder/package.json` — package metadata.
 
-See [the normative AAC Quilt v1 contract](docs/aac-transcode-quilt-v1.md). `finalize` consumes the supplied root-key array and overwrites that exact array on success, failure, defect, or interruption. JavaScript zeroization is best effort because aliases and runtime-internal copies cannot be controlled.
+See [the normative AAC Quilt v1 contract](docs/aac-transcode-quilt-v1.md). The caller generates and durably protects a fresh 32-byte root key and generation nonce before finalization. `finalize` consumes the supplied root-key array and overwrites that exact array on success, failure, defect, or interruption; it returns only the artifact. JavaScript zeroization is best effort because aliases and runtime-internal copies cannot be controlled.
 
 ## Security and scope
 
-This package performs local computation only. It does not use Sui, Seal, Walrus, Quilt publication/certification, or on-chain pointer mutation; `keySeal` is opaque bytes. The current `miso_record_seal_policy` treats the ability to supply a usable `&Record` as the entitlement: address-owned Records can be supplied only by their owner, while shared or frozen Records can intentionally be supplied by other callers. Whether protected playback is production-ready depends on the complete policy deployment, key-loader, publication, and player integration outside this package.
+This package performs local computation only. It does not protect or persist the root key, use deployment SDKs, publish/certify Quilts, or mutate pointers. External key custody and authorization belong to the caller. The Quilt contains encrypted media and a non-secret `keyId` commitment, never a key envelope or plaintext key.
 
 FFmpeg is a native parser, not a hostile-media sandbox. Production systems processing untrusted input need an OS/container isolation boundary. This package neither distributes nor links FFmpeg.
 

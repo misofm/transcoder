@@ -14,17 +14,13 @@ export const canonicalIndexBytes = (index: QuiltIndex): Uint8Array => {
     recordingId: index.recordingId,
     generation: index.generation,
     masterPlaylist: index.masterPlaylist,
-    key: {
-      identifier: index.key.identifier,
-      bytes: index.key.bytes,
-      sha256: index.key.sha256,
-    },
     segmentTargetMs: index.segmentTargetMs,
     patchCount: index.patchCount,
     encryption: {
       scheme: index.encryption.scheme,
       kdf: index.encryption.kdf,
-      sealPlaintextBytes: index.encryption.sealPlaintextBytes,
+      rootKeyBytes: index.encryption.rootKeyBytes,
+      keyId: index.encryption.keyId,
     },
     renditions: index.renditions.map((rendition) => ({
       id: rendition.id,
@@ -56,7 +52,6 @@ export const canonicalIndexBytes = (index: QuiltIndex): Uint8Array => {
 export const canonicalIdentifiers = (index: QuiltIndex): readonly string[] => [
   "index.json",
   "master.m3u8",
-  "key.seal",
   ...[...index.renditions]
     .sort((left, right) => left.nominalBitrate - right.nominalBitrate)
     .flatMap((rendition: RenditionDescriptor) => [

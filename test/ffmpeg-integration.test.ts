@@ -140,7 +140,6 @@ test("real FFmpeg creates one aligned three-rendition plaintext ladder", async (
         {
           generationNonce,
           rootKey,
-          keySeal: new TextEncoder().encode("opaque-test-seal"),
         },
       );
     }).pipe(Effect.provide(TranscoderNodeLive)),
@@ -153,7 +152,7 @@ test("real FFmpeg creates one aligned three-rendition plaintext ladder", async (
     }).pipe(Effect.provide(TranscoderNodeLive)),
   );
   expect(verified.verified).toBe(true);
-  expect(verified.patchCount).toBe(15);
+  expect(verified.patchCount).toBe(14);
   const index = parseQuiltIndex(await Bun.file(artifact.indexPath).bytes());
   if (process.env["MISO_PINNED_FFMPEG"] === "1") {
     const golden = `${JSON.stringify(
@@ -178,7 +177,9 @@ test("real FFmpeg creates one aligned three-rendition plaintext ladder", async (
       "./fixtures/linuxserver-ffmpeg-8.1.2.golden.json",
       import.meta.url,
     );
-    expect(await readFile(goldenUrl, "utf8")).toBe(golden);
+    if (process.env["MISO_UPDATE_GOLDEN"] === "1")
+      await writeFile(goldenUrl, golden);
+    else expect(await readFile(goldenUrl, "utf8")).toBe(golden);
   }
   const verificationRootKey = Uint8Array.from(
     { length: 32 },
@@ -233,7 +234,6 @@ test("real FFmpeg creates one aligned three-rendition plaintext ladder", async (
         {
           generationNonce,
           rootKey: resumedRootKey,
-          keySeal: new TextEncoder().encode("opaque-test-seal"),
         },
       );
     }).pipe(Effect.provide(TranscoderNodeLive)),
@@ -241,6 +241,19 @@ test("real FFmpeg creates one aligned three-rendition plaintext ladder", async (
   expect(resumed.generationDigest).toBe(artifact.generationDigest);
   expect(resumedRootKey).toEqual(new Uint8Array(32));
   expect(await Bun.file(checkpointPath).exists()).toBe(true);
+  const wrongRootKey = new Uint8Array(32).fill(99);
+  await expect(
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const transcoder = yield* Transcoder;
+        return yield* transcoder.finalize(
+          { prepared, recordingId, network: "testnet" },
+          { generationNonce, rootKey: wrongRootKey },
+        );
+      }).pipe(Effect.provide(TranscoderNodeLive)),
+    ),
+  ).rejects.toBeDefined();
+  expect(wrongRootKey).toEqual(new Uint8Array(32));
   const correctCheckpoint = await readFile(checkpointPath);
   await writeFile(checkpointPath, "tampered\n");
   const checkpointKey = Uint8Array.from({ length: 32 }, (_, index) => index);
@@ -253,7 +266,6 @@ test("real FFmpeg creates one aligned three-rendition plaintext ladder", async (
           {
             generationNonce,
             rootKey: checkpointKey,
-            keySeal: new TextEncoder().encode("opaque-test-seal"),
           },
         );
       }).pipe(Effect.provide(TranscoderNodeLive)),
@@ -271,7 +283,6 @@ test("real FFmpeg creates one aligned three-rendition plaintext ladder", async (
           {
             generationNonce,
             rootKey: reusedNonceKey,
-            keySeal: new TextEncoder().encode("opaque-test-seal"),
           },
         );
       }).pipe(Effect.provide(TranscoderNodeLive)),
@@ -299,7 +310,14 @@ test("real FFmpeg creates one aligned three-rendition plaintext ladder", async (
       response.end(Buffer.from(body));
       return;
     }
-    if (url.pathname === "/key.seal") {
+    if (url.pathname === "/key.external") {
+      if (
+        url.searchParams.get("generation") !==
+        Buffer.from(generationNonce).toString("base64url")
+      ) {
+        response.writeHead(404).end();
+        return;
+      }
       const key = keys.get(url.searchParams.get("rendition") ?? "");
       if (key === undefined) {
         response.writeHead(404).end();
@@ -422,7 +440,6 @@ test("real FFmpeg creates one aligned three-rendition plaintext ladder", async (
     for (const key of keys.values()) key.fill(0);
   }
   for (const identifier of [
-    "key.seal",
     index.renditions[0]!.init.identifier,
     index.renditions[0]!.segments[0]!.identifier,
   ]) {

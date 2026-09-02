@@ -69,7 +69,6 @@ test("failed finalization zeroes the owned key and cannot promote partial output
         {
           generationNonce: new Uint8Array(32).fill(8),
           rootKey,
-          keySeal: new Uint8Array([1]),
         },
       ),
     ),
@@ -176,7 +175,6 @@ test("interrupted encryption joins cleanup before scope completion", async () =>
         {
           generationNonce: new Uint8Array(32).fill(10),
           rootKey,
-          keySeal: new Uint8Array([1]),
         },
       ),
     ),

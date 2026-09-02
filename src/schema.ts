@@ -206,7 +206,6 @@ export const assertQuiltIndex: (
       "recordingId",
       "generation",
       "masterPlaylist",
-      "key",
       "segmentTargetMs",
       "patchCount",
       "encryption",
@@ -223,17 +222,19 @@ export const assertQuiltIndex: (
     typeof index.generation !== "string" ||
     !GENERATION.test(index.generation) ||
     index.masterPlaylist !== "master.m3u8" ||
-    !validateFile(index.key) ||
-    (index.key as Record<string, unknown>).identifier !== "key.seal" ||
     !safeInteger(index.segmentTargetMs, 1_000, 10_000) ||
-    !safeInteger(index.patchCount, 6, MAX_PATCHES) ||
+    !safeInteger(index.patchCount, 11, MAX_PATCHES) ||
     typeof index.encryption !== "object" ||
     index.encryption === null ||
-    !exactKeys(index.encryption, ["scheme", "kdf", "sealPlaintextBytes"]) ||
+    !exactKeys(index.encryption, ["scheme", "kdf", "rootKeyBytes", "keyId"]) ||
     (index.encryption as Record<string, unknown>).scheme !==
       "hls-aes-128-cbc-hkdf/1" ||
     (index.encryption as Record<string, unknown>).kdf !== "hkdf-sha256" ||
-    (index.encryption as Record<string, unknown>).sealPlaintextBytes !== 32 ||
+    (index.encryption as Record<string, unknown>).rootKeyBytes !== 32 ||
+    typeof (index.encryption as Record<string, unknown>).keyId !== "string" ||
+    !SHA256.test(
+      (index.encryption as Record<string, unknown>).keyId as string,
+    ) ||
     !Array.isArray(index.renditions) ||
     index.renditions.length !== RENDITIONS.length
   )
@@ -311,7 +312,6 @@ export const assertQuiltIndex: (
   const allIdentifiers = [
     "index.json",
     "master.m3u8",
-    "key.seal",
     ...(index.renditions as readonly RenditionDescriptor[]).flatMap(
       (rendition) => [
         rendition.playlist,

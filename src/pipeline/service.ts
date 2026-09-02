@@ -90,13 +90,17 @@ export const TranscoderLive = Layer.effect(
         ),
       finalize: (request, material) => {
         const workspacePath = path.join(request.prepared.rootPath, "..", "..");
+        const ownedMaterial: GenerationMaterial = {
+          generationNonce: Uint8Array.from(material.generationNonce),
+          rootKey: Uint8Array.from(material.rootKey),
+        };
         return around(
           "finalize",
           withWorkspaceLock(workspacePath, "finalize", () =>
             cleanupWorkspaceTemporaries(workspacePath).pipe(
               Effect.andThen(verifyPreparedTranscode(request.prepared)),
               Effect.provideService(Ffmpeg, ffmpeg),
-              Effect.andThen(finalizeTranscode(request, material)),
+              Effect.andThen(finalizeTranscode(request, ownedMaterial)),
               Effect.tap((artifact) =>
                 writeWorkspaceState(workspacePath, {
                   schema: "miso.transcoder-workspace/1",
@@ -106,7 +110,14 @@ export const TranscoderLive = Layer.effect(
               ),
             ),
           ),
-        ).pipe(Effect.ensuring(Effect.sync(() => material.rootKey.fill(0))));
+        ).pipe(
+          Effect.ensuring(
+            Effect.sync(() => {
+              ownedMaterial.rootKey.fill(0);
+              material.rootKey.fill(0);
+            }),
+          ),
+        );
       },
       verify: (artifact) => around("verify", verifyArtifact(artifact)),
       cleanupPrepared: (prepared) => {

@@ -9,6 +9,7 @@ import {
 } from "../src/hls/rewrite.js";
 
 const bytes = (value: string) => new TextEncoder().encode(value);
+const generation = "A".repeat(43);
 const valid =
   '#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:6\n#EXT-X-PLAYLIST-TYPE:VOD\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-MAP:URI="aac-096-init.mp4"\n#EXTINF:6.000,\naac-096-00000.m4s\n#EXTINF:1.500,\naac-096-00001.m4s\n#EXT-X-ENDLIST\n';
 
@@ -27,14 +28,14 @@ describe("strict HLS processing", () => {
     expect(playlist.segments.map((segment) => segment.durationMs)).toEqual([
       6000, 1500,
     ]);
-    const rewritten = rewriteMediaPlaylist(bytes(valid), "aac-096");
+    const rewritten = rewriteMediaPlaylist(bytes(valid), generation, "aac-096");
     const text = new TextDecoder().decode(rewritten);
     expect(text).toContain(
-      '#EXT-X-MAP:URI="aac-096-init.mp4"\n#EXT-X-KEY:METHOD=AES-128,URI="key.seal?rendition=aac-096"\n',
+      `#EXT-X-MAP:URI="aac-096-init.mp4"\n#EXT-X-KEY:METHOD=AES-128,URI="key.external?generation=${generation}&rendition=aac-096"\n`,
     );
     expect(text).not.toContain("IV=");
     expect(() =>
-      validateEncryptedMediaPlaylist(rewritten, "aac-096"),
+      validateEncryptedMediaPlaylist(rewritten, generation, "aac-096"),
     ).not.toThrow();
   });
 

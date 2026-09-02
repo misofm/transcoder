@@ -11,7 +11,6 @@ export type Network = "testnet" | "mainnet";
 export interface GenerationMaterial {
   readonly generationNonce: Uint8Array;
   readonly rootKey: Uint8Array;
-  readonly keySeal: Uint8Array;
 }
 
 export interface TranscodeProfile {
@@ -95,13 +94,13 @@ export interface QuiltIndex {
   readonly recordingId: string;
   readonly generation: string;
   readonly masterPlaylist: "master.m3u8";
-  readonly key: FileDescriptor;
   readonly segmentTargetMs: number;
   readonly patchCount: number;
   readonly encryption: {
     readonly scheme: "hls-aes-128-cbc-hkdf/1";
     readonly kdf: "hkdf-sha256";
-    readonly sealPlaintextBytes: 32;
+    readonly rootKeyBytes: 32;
+    readonly keyId: string;
   };
   readonly renditions: readonly RenditionDescriptor[];
 }
