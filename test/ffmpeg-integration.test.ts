@@ -22,6 +22,8 @@ import { parseQuiltIndex } from "../src/schema.js";
 import { parsePlaintextMediaPlaylist } from "../src/hls/playlist.js";
 
 const roots: string[] = [];
+const PINNED_FFMPEG_IMAGE =
+  "ghcr.io/linuxserver/ffmpeg:8.1.2-cli-ls76@sha256:2e7000921be8de2704a4f27dfd3d988562697a346eaabb937a81046c306f0af7";
 afterAll(async () =>
   Promise.all(roots.map((root) => rm(root, { recursive: true, force: true }))),
 );
@@ -153,6 +155,35 @@ test("real FFmpeg creates one aligned three-rendition plaintext ladder", async (
   expect(verified.verified).toBe(true);
   expect(verified.patchCount).toBe(15);
   const index = parseQuiltIndex(await Bun.file(artifact.indexPath).bytes());
+  if (process.env["MISO_PINNED_FFMPEG"] === "1") {
+    const golden = `${JSON.stringify(
+      {
+        schema: "miso.transcoder-golden/1",
+        image: PINNED_FFMPEG_IMAGE,
+        prepareDigest: prepared.prepareDigest,
+        sourceSha256: prepared.sourceSha256,
+        generationDigest: artifact.generationDigest,
+        indexSha256: artifact.indexSha256,
+        indexBase64: Buffer.from(artifact.indexBytes).toString("base64"),
+        patchCount: artifact.patchCount,
+        patches: artifact.patches.map(({ identifier, bytes, sha256 }) => ({
+          identifier,
+          bytes,
+          sha256,
+        })),
+        toolchain: artifact.toolchain,
+      },
+      null,
+      2,
+    )}\n`;
+    const goldenUrl = new URL(
+      "./fixtures/linuxserver-ffmpeg-8.1.2.golden.json",
+      import.meta.url,
+    );
+    if (process.env["MISO_UPDATE_GOLDEN"] === "1")
+      await writeFile(goldenUrl, golden);
+    else expect(await readFile(goldenUrl, "utf8")).toBe(golden);
+  }
   const verificationRootKey = Uint8Array.from(
     { length: 32 },
     (_, index) => index,
@@ -433,8 +464,6 @@ test("real FFmpeg creates one aligned three-rendition plaintext ladder", async (
     schema: "miso.transcoder-workspace/1",
     generationDigest: artifact.generationDigest,
   });
-  if (process.env["MISO_PINNED_FFMPEG"] === "1")
-    expect(prepared.toolchain.ffmpegVersion).toContain("8.1.2");
 }, 120_000);
 
 test("real FFmpeg preserves a 44.1 kHz stereo exact-target fixture", async () => {
