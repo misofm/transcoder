@@ -58,27 +58,6 @@ jobs:
       - name: Install in isolated Bun consumer
         run: bun test/isolated-consumer.mjs bun "$(pwd)"/*.tgz
 
-  structural-ffmpeg:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-        with:
-          persist-credentials: false
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
-        with:
-          bun-version: 1.4.0
-      - run: bun install --frozen-lockfile
-      - run: sudo apt-get update
-      - run: sudo apt-get install --yes ffmpeg
-      - run: bunx playwright install --with-deps chromium
-      - name: Structural conformance with runner FFmpeg
-        env:
-          MISO_FFMPEG: /usr/bin/ffmpeg
-          MISO_FFPROBE: /usr/bin/ffprobe
-          MISO_HLS_SMOKE: "1"
-        run: bun test test/ffmpeg-integration.test.ts
-
   pinned-ffmpeg:
     runs-on: ubuntu-24.04
     timeout-minutes: 25

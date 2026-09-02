@@ -1,18 +1,14 @@
 import { Effect } from "effect";
-import { randomBytes } from "node:crypto";
 import { constants } from "node:fs";
-import { open, unlink, type FileHandle } from "node:fs/promises";
+import { lstat, open } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import { MediaValidationError, type NativeProcessError } from "../errors.js";
 import type { NativeProcessService } from "../process/native-process.js";
 import { parsePlaintextMediaPlaylist } from "../hls/playlist.js";
-import { assertNoSymlinkComponentsPromise } from "../workspace/atomic-file.js";
 
 const PACKET_JSON_LIMIT = 16 * 1024 * 1024;
 const PLAYLIST_LIMIT = 1_048_576;
-const PHYSICAL_TIMELINE_LIMIT = 256 * 1024 * 1024;
-const COPY_BUFFER_BYTES = 64 * 1024;
 
 const readPlaylist = async (path: string): Promise<Buffer> => {
   const handle = await open(
@@ -61,179 +57,6 @@ const invalid = (subject: string, message: string) =>
     message,
   });
 
-const errorCode = (error: unknown): string | undefined =>
-  error instanceof Error && "code" in error && typeof error.code === "string"
-    ? error.code
-    : undefined;
-
-const syncDirectory = async (path: string): Promise<void> => {
-  const handle = await open(path, constants.O_RDONLY);
-  try {
-    await handle.sync();
-  } finally {
-    await handle.close();
-  }
-};
-
-const writeAll = async (
-  output: FileHandle,
-  chunk: Uint8Array,
-  position: number,
-): Promise<number> => {
-  let offset = 0;
-  while (offset < chunk.byteLength) {
-    const { bytesWritten } = await output.write(
-      chunk,
-      offset,
-      chunk.byteLength - offset,
-      position + offset,
-    );
-    if (bytesWritten < 1) throw new RangeError();
-    offset += bytesWritten;
-  }
-  return position + chunk.byteLength;
-};
-
-const appendRegularFile = async (
-  output: FileHandle,
-  sourcePath: string,
-  initialPosition: number,
-  signal: AbortSignal,
-): Promise<number> => {
-  await assertNoSymlinkComponentsPromise(sourcePath);
-  const source = await open(
-    sourcePath,
-    constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0),
-  );
-  try {
-    const before = await source.stat();
-    if (
-      !before.isFile() ||
-      before.nlink !== 1 ||
-      before.size < 1 ||
-      !Number.isSafeInteger(before.size) ||
-      initialPosition + before.size > PHYSICAL_TIMELINE_LIMIT
-    )
-      throw new RangeError();
-    let sourceBytes = 0;
-    let position = initialPosition;
-    for await (const value of source.createReadStream({
-      autoClose: false,
-      highWaterMark: COPY_BUFFER_BYTES,
-      signal,
-    })) {
-      const chunk = Buffer.from(value);
-      sourceBytes += chunk.byteLength;
-      if (sourceBytes > before.size) throw new RangeError();
-      position = await writeAll(output, chunk, position);
-    }
-    const after = await source.stat();
-    if (
-      sourceBytes !== before.size ||
-      after.dev !== before.dev ||
-      after.ino !== before.ino ||
-      after.size !== before.size ||
-      after.mtimeMs !== before.mtimeMs ||
-      after.ctimeMs !== before.ctimeMs
-    )
-      throw new RangeError();
-    return position;
-  } finally {
-    await source.close();
-  }
-};
-
-interface PhysicalTimelineInput {
-  readonly path: string;
-  readonly segmentDurationsMs: readonly number[];
-  readonly segmentEndPositions: readonly number[];
-}
-
-const removePhysicalTimelineInput = async (
-  input: PhysicalTimelineInput,
-): Promise<void> => {
-  try {
-    await unlink(input.path);
-  } catch (error) {
-    if (errorCode(error) !== "ENOENT") throw error;
-  }
-  await syncDirectory(dirname(input.path));
-};
-
-const createPhysicalTimelineInput = async (
-  playlistPath: string,
-  signal: AbortSignal,
-): Promise<PhysicalTimelineInput> => {
-  const playlist = parsePlaintextMediaPlaylist(
-    await readPlaylist(playlistPath),
-  );
-  const mediaDirectory = dirname(playlistPath);
-  // Both live staging directories and cached plaintext digest directories have
-  // cleanup-scanned parents. This leaves a recoverable name after a hard crash.
-  const temporaryDirectory = dirname(mediaDirectory);
-  await assertNoSymlinkComponentsPromise(mediaDirectory);
-  await assertNoSymlinkComponentsPromise(temporaryDirectory);
-  const path = join(
-    temporaryDirectory,
-    `.aac-timeline.mp4.tmp-${process.pid}-${randomBytes(12).toString("hex")}`,
-  );
-  let output: FileHandle | undefined;
-  let keep = false;
-  try {
-    output = await open(
-      path,
-      constants.O_WRONLY |
-        constants.O_CREAT |
-        constants.O_EXCL |
-        (constants.O_NOFOLLOW ?? 0),
-      0o600,
-    );
-    await output.chmod(0o600);
-    let position = await appendRegularFile(
-      output,
-      join(mediaDirectory, playlist.mapIdentifier),
-      0,
-      signal,
-    );
-    const segmentEndPositions: number[] = [];
-    for (const segment of playlist.segments) {
-      position = await appendRegularFile(
-        output,
-        join(mediaDirectory, segment.identifier),
-        position,
-        signal,
-      );
-      segmentEndPositions.push(position);
-    }
-    const metadata = await output.stat();
-    if (
-      !metadata.isFile() ||
-      metadata.nlink !== 1 ||
-      metadata.size !== position ||
-      (metadata.mode & 0o777) !== 0o600
-    )
-      throw new RangeError();
-    await output.sync();
-    await output.close();
-    output = undefined;
-    await syncDirectory(temporaryDirectory);
-    keep = true;
-    return {
-      path,
-      segmentDurationsMs: playlist.segments.map(
-        (segment) => segment.durationMs,
-      ),
-      segmentEndPositions,
-    };
-  } finally {
-    if (output !== undefined) await output.close().catch(() => undefined);
-    if (!keep) {
-      await unlink(path).catch(() => undefined);
-      await syncDirectory(temporaryDirectory).catch(() => undefined);
-    }
-  }
-};
-
 const packetArgs = (playlistPath: string): readonly string[] => [
   "-hide_banner",
   "-v",
@@ -253,26 +76,6 @@ const parseInteger = (value: unknown): number | undefined => {
   if (typeof value !== "number" && typeof value !== "string") return undefined;
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) ? parsed : undefined;
-};
-
-const parseRoundedSampleDuration = (
-  value: unknown,
-  sampleRateHz: 44_100 | 48_000,
-): number | undefined => {
-  if (
-    typeof value !== "string" ||
-    !/^(?:0|[1-9][0-9]*)\.[0-9]{6}$/u.test(value)
-  )
-    return undefined;
-  const samples = Number(value) * sampleRateHz;
-  const rounded = Math.round(samples);
-  // ffprobe renders packet times to six decimal places. At the supported
-  // sample rates that introduces at most 0.024 sample of rounding error.
-  return Number.isSafeInteger(rounded) &&
-    rounded > 0 &&
-    Math.abs(samples - rounded) <= 0.025
-    ? rounded
-    : undefined;
 };
 
 export const parseTimeline = (
@@ -332,7 +135,7 @@ export const parseTimeline = (
     const packet = packetValue as Record<string, unknown>;
     const pts = parseInteger(packet["pts"]);
     const dts = parseInteger(packet["dts"]);
-    const reportedDuration = parseInteger(packet["duration"]);
+    const duration = parseInteger(packet["duration"]);
     const pos = parseInteger(packet["pos"]);
     const ptsTime =
       typeof packet["pts_time"] === "string" ? packet["pts_time"] : undefined;
@@ -340,32 +143,18 @@ export const parseTimeline = (
       typeof packet["duration_time"] === "string"
         ? packet["duration_time"]
         : undefined;
-    const roundedDuration = parseRoundedSampleDuration(
-      durationTime,
-      sampleRateHz,
-    );
-    const duration = reportedDuration ?? roundedDuration;
-    if (pts === undefined)
-      throw invalid(
-        subject,
-        "Packet integer presentation timestamp is missing",
-      );
-    if (dts === undefined)
-      throw invalid(subject, "Packet integer decode timestamp is missing");
     if (
+      pts === undefined ||
+      dts === undefined ||
       duration === undefined ||
-      roundedDuration === undefined ||
-      (reportedDuration !== undefined && reportedDuration !== roundedDuration)
+      pos === undefined ||
+      pos < 0 ||
+      duration <= 0 ||
+      ptsTime === undefined ||
+      durationTime === undefined ||
+      (previousDts !== undefined && dts <= previousDts)
     )
-      throw invalid(subject, "Packet duration is missing or inconsistent");
-    if (pos === undefined || pos < 0)
-      throw invalid(subject, "Packet byte position is missing or negative");
-    if (duration <= 0)
-      throw invalid(subject, "Packet duration is not positive");
-    if (ptsTime === undefined || durationTime === undefined)
-      throw invalid(subject, "Packet decimal timestamps are missing");
-    if (previousDts !== undefined && dts <= previousDts)
-      throw invalid(subject, "Packet decode timestamps are non-monotonic");
+      throw invalid(subject, "Packet timestamps are missing or non-monotonic");
     previousDts = dts;
     totalSamples += duration;
     if (!Number.isSafeInteger(totalSamples))
@@ -425,53 +214,54 @@ export const validatePlaintextRendition = (
   NativeProcessError | MediaValidationError
 > =>
   Effect.gen(function* () {
-    const timeline = yield* Effect.acquireUseRelease(
-      Effect.uninterruptible(
-        Effect.tryPromise({
-          try: (signal) => createPhysicalTimelineInput(playlistPath, signal),
-          catch: (error) =>
-            error instanceof MediaValidationError
-              ? error
-              : invalid(
-                  playlistPath,
-                  "Physical fragment timeline input could not be created",
-                ),
-        }),
-      ),
-      (playlistEvidence) =>
-        Effect.gen(function* () {
-          const packetResult = yield* process.run({
-            role: "ffprobe-timeline",
-            executable: ffprobePath,
-            args: packetArgs(playlistEvidence.path),
-            stdoutLimitBytes: PACKET_JSON_LIMIT,
-          });
-          return yield* Effect.try({
-            try: () =>
-              parseTimeline(
-                playlistPath,
-                packetResult.stdout,
-                sampleRateHz,
-                durationMs,
-                playlistEvidence.segmentDurationsMs,
-                playlistEvidence.segmentEndPositions,
-              ),
-            catch: (error) =>
-              error instanceof MediaValidationError
-                ? error
-                : invalid(playlistPath, "Packet validation failed"),
-          });
-        }),
-      (playlistEvidence) =>
-        Effect.tryPromise({
-          try: () => removePhysicalTimelineInput(playlistEvidence),
-          catch: () =>
-            invalid(
-              playlistPath,
-              "Physical fragment timeline input could not be removed",
-            ),
-        }),
-    );
+    const playlistEvidence = yield* Effect.tryPromise({
+      try: async () => {
+        const playlist = parsePlaintextMediaPlaylist(
+          await readPlaylist(playlistPath),
+        );
+        const directory = dirname(playlistPath);
+        const init = await lstat(join(directory, playlist.mapIdentifier));
+        if (!init.isFile() || init.isSymbolicLink()) throw new TypeError();
+        let position = init.size;
+        const segmentEndPositions: number[] = [];
+        for (const segment of playlist.segments) {
+          const metadata = await lstat(join(directory, segment.identifier));
+          if (!metadata.isFile() || metadata.isSymbolicLink())
+            throw new TypeError();
+          position += metadata.size;
+          if (!Number.isSafeInteger(position)) throw new TypeError();
+          segmentEndPositions.push(position);
+        }
+        return {
+          segmentDurationsMs: playlist.segments.map(
+            (segment) => segment.durationMs,
+          ),
+          segmentEndPositions,
+        };
+      },
+      catch: () => invalid(playlistPath, "Playlist timeline cannot be parsed"),
+    });
+    const packetResult = yield* process.run({
+      role: "ffprobe-timeline",
+      executable: ffprobePath,
+      args: packetArgs(playlistPath),
+      stdoutLimitBytes: PACKET_JSON_LIMIT,
+    });
+    const timeline = yield* Effect.try({
+      try: () =>
+        parseTimeline(
+          playlistPath,
+          packetResult.stdout,
+          sampleRateHz,
+          durationMs,
+          playlistEvidence.segmentDurationsMs,
+          playlistEvidence.segmentEndPositions,
+        ),
+      catch: (error) =>
+        error instanceof MediaValidationError
+          ? error
+          : invalid(playlistPath, "Packet validation failed"),
+    });
     yield* process.run({
       role: "ffmpeg-decode",
       executable: ffmpegPath,

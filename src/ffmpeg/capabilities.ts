@@ -15,6 +15,8 @@ import type { NativeProcessService } from "../process/native-process.js";
 const VERSION_OUTPUT_LIMIT = 256 * 1024;
 const CAPABILITY_OUTPUT_LIMIT = 4 * 1024 * 1024;
 
+export const REQUIRED_FFMPEG_VERSION = "8.1.2" as const;
+
 export const FFMPEG_VERSION_ARGS = ["-version"] as const;
 export const FFPROBE_VERSION_ARGS = ["-version"] as const;
 export const FFMPEG_ENCODERS_ARGS = ["-hide_banner", "-encoders"] as const;
@@ -78,6 +80,10 @@ const versionToken = (
   return match?.[1];
 };
 
+const isRequiredVersion = (token: string | undefined): boolean =>
+  token === REQUIRED_FFMPEG_VERSION ||
+  token?.startsWith(`${REQUIRED_FFMPEG_VERSION}-`) === true;
+
 const libraryVersion = (
   value: string,
   library: "libavcodec" | "libavformat",
@@ -135,6 +141,15 @@ export const parseToolchainFingerprint = (
     throw capabilityError(
       "toolchain",
       "FFmpeg and FFprobe build versions do not match",
+    );
+  }
+  if (
+    !isRequiredVersion(versionToken(ffmpegVersion, "ffmpeg")) ||
+    !isRequiredVersion(versionToken(ffprobeVersion, "ffprobe"))
+  ) {
+    throw capabilityError(
+      "toolchain",
+      `FFmpeg and FFprobe ${REQUIRED_FFMPEG_VERSION} are required`,
     );
   }
   if (
@@ -202,8 +217,23 @@ export const parseToolchainFingerprint = (
     const parsed: unknown = JSON.parse(outputs.ffprobeJson);
     if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
       throw new TypeError();
+    const programVersion = (parsed as Record<string, unknown>)[
+      "program_version"
+    ];
+    const reportedVersion =
+      typeof programVersion === "object" && programVersion !== null
+        ? (programVersion as Record<string, unknown>)["version"]
+        : undefined;
+    if (
+      typeof reportedVersion !== "string" ||
+      !isRequiredVersion(reportedVersion)
+    )
+      throw new TypeError();
   } catch {
-    throw capabilityError("ffprobe", "FFprobe JSON output is unavailable");
+    throw capabilityError(
+      "ffprobe",
+      `FFprobe ${REQUIRED_FFMPEG_VERSION} JSON output is unavailable`,
+    );
   }
 
   const withoutDigest = {

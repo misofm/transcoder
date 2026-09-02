@@ -1,14 +1,6 @@
 import { expect, test } from "bun:test";
-import { Effect, Fiber } from "effect";
-import { existsSync, readFileSync } from "node:fs";
-import {
-  mkdtemp,
-  open,
-  realpath,
-  rm,
-  symlink,
-  writeFile,
-} from "node:fs/promises";
+import { Effect } from "effect";
+import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -70,6 +62,17 @@ test("rejects mismatched ffmpeg and ffprobe builds", () => {
     parseToolchainFingerprint("/opt/ffmpeg", "/opt/ffprobe", {
       ...capabilityOutputs,
       ffprobeVersion: version("ffprobe", "8.1.1-static"),
+    }),
+  ).toThrow(ToolchainCapabilityError);
+});
+
+test("rejects matching toolchains outside the pinned FFmpeg release", () => {
+  expect(() =>
+    parseToolchainFingerprint("/opt/ffmpeg", "/opt/ffprobe", {
+      ...capabilityOutputs,
+      ffmpegVersion: version("ffmpeg", "8.1.1-static"),
+      ffprobeVersion: version("ffprobe", "8.1.1-static"),
+      ffprobeJson: '{"program_version":{"version":"8.1.1"}}',
     }),
   ).toThrow(ToolchainCapabilityError);
 });
@@ -228,7 +231,7 @@ test("parses a supported mono source and rejects ambiguous or surround audio", (
 test.each([
   ["clipping", 1.01],
   ["non-finite", Number.NaN],
-] as const)("rejects %s decoded PCM", async (name, sample) => {
+] as const)("rejects %s decoded PCM", async (_name, sample) => {
   const root = await mkdtemp(join(await temporaryRoot, "transcoder-pcm-"));
   const playlistPath = join(root, "aac-096.m3u8");
   await writeFile(
@@ -253,7 +256,7 @@ test.each([
         {
           pts: 0,
           dts: 0,
-          ...(name === "clipping" ? { duration: 48000 } : {}),
+          duration: 48000,
           pos: 1,
           pts_time: "0.000000",
           duration_time: "1.000000",
@@ -261,15 +264,8 @@ test.each([
       ],
     }),
   );
-  let physicalTimelinePath: string | undefined;
   const process: NativeProcessService = {
     run: (request) => {
-      if (request.role === "ffprobe-timeline") {
-        physicalTimelinePath = request.args.at(-1);
-        expect(physicalTimelinePath).toBeDefined();
-        expect(physicalTimelinePath).not.toBe(playlistPath);
-        expect(readFileSync(physicalTimelinePath!)).toEqual(Buffer.from("is"));
-      }
       if (request.role === "ffmpeg-clipping-scan") {
         const chunk = Buffer.alloc(4);
         chunk.writeFloatLE(sample);
@@ -302,139 +298,6 @@ test.each([
     ).rejects.toMatchObject({
       message: "Decoded audio contains clipping or non-finite samples",
     });
-    expect(physicalTimelinePath).toMatch(
-      /\.aac-timeline\.mp4\.tmp-[0-9]+-[0-9a-f]+$/u,
-    );
-    expect(existsSync(physicalTimelinePath!)).toBe(false);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
-test("removes the physical timeline input when ffprobe is interrupted", async () => {
-  const root = await mkdtemp(
-    join(await temporaryRoot, "transcoder-probe-cancel-"),
-  );
-  const playlistPath = join(root, "aac-096.m3u8");
-  await writeFile(
-    playlistPath,
-    '#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:1\n#EXT-X-PLAYLIST-TYPE:VOD\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-MAP:URI="aac-096-init.mp4"\n#EXTINF:1.000,\naac-096-00000.m4s\n#EXT-X-ENDLIST\n',
-  );
-  await writeFile(join(root, "aac-096-init.mp4"), "init");
-  await writeFile(join(root, "aac-096-00000.m4s"), "fragment");
-  let physicalTimelinePath: string | undefined;
-  const process: NativeProcessService = {
-    run: (request) => {
-      if (request.role === "ffprobe-timeline") {
-        physicalTimelinePath = request.args.at(-1);
-        expect(readFileSync(physicalTimelinePath!)).toEqual(
-          Buffer.from("initfragment"),
-        );
-        return Effect.never;
-      }
-      return Effect.die("unexpected native process invocation");
-    },
-  };
-  try {
-    const fiber = Effect.runFork(
-      validatePlaintextRendition(
-        process,
-        "/ffmpeg",
-        "/ffprobe",
-        playlistPath,
-        48_000,
-        1_000,
-      ),
-    );
-    for (
-      let attempt = 0;
-      physicalTimelinePath === undefined && attempt < 100;
-      attempt += 1
-    )
-      await new Promise((resolve) => setTimeout(resolve, 5));
-    expect(physicalTimelinePath).toBeDefined();
-    expect(existsSync(physicalTimelinePath!)).toBe(true);
-    await Effect.runPromise(Fiber.interrupt(fiber));
-    expect(existsSync(physicalTimelinePath!)).toBe(false);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
-test("rejects a symlinked fragment before probing a physical timeline", async () => {
-  const root = await mkdtemp(
-    join(await temporaryRoot, "transcoder-probe-link-"),
-  );
-  const playlistPath = join(root, "aac-096.m3u8");
-  await writeFile(
-    playlistPath,
-    '#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:1\n#EXT-X-PLAYLIST-TYPE:VOD\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-MAP:URI="aac-096-init.mp4"\n#EXTINF:1.000,\naac-096-00000.m4s\n#EXT-X-ENDLIST\n',
-  );
-  await writeFile(join(root, "aac-096-init.mp4"), "init");
-  await writeFile(join(root, "actual.m4s"), "fragment");
-  await symlink("actual.m4s", join(root, "aac-096-00000.m4s"));
-  let invoked = false;
-  const process: NativeProcessService = {
-    run: () => {
-      invoked = true;
-      return Effect.die("native process must not be invoked");
-    },
-  };
-  try {
-    await expect(
-      Effect.runPromise(
-        validatePlaintextRendition(
-          process,
-          "/ffmpeg",
-          "/ffprobe",
-          playlistPath,
-          48_000,
-          1_000,
-        ),
-      ),
-    ).rejects.toBeInstanceOf(Error);
-    expect(invoked).toBe(false);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
-test("rejects an oversized physical timeline before streaming fragment bytes", async () => {
-  const root = await mkdtemp(
-    join(await temporaryRoot, "transcoder-probe-size-"),
-  );
-  const playlistPath = join(root, "aac-096.m3u8");
-  await writeFile(
-    playlistPath,
-    '#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:1\n#EXT-X-PLAYLIST-TYPE:VOD\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-MAP:URI="aac-096-init.mp4"\n#EXTINF:1.000,\naac-096-00000.m4s\n#EXT-X-ENDLIST\n',
-  );
-  await writeFile(join(root, "aac-096-init.mp4"), "init");
-  const segment = await open(join(root, "aac-096-00000.m4s"), "wx", 0o600);
-  await segment.truncate(256 * 1024 * 1024 + 1);
-  await segment.close();
-  let invoked = false;
-  const process: NativeProcessService = {
-    run: () => {
-      invoked = true;
-      return Effect.die("native process must not be invoked");
-    },
-  };
-  try {
-    await expect(
-      Effect.runPromise(
-        validatePlaintextRendition(
-          process,
-          "/ffmpeg",
-          "/ffprobe",
-          playlistPath,
-          48_000,
-          1_000,
-        ),
-      ),
-    ).rejects.toMatchObject({
-      message: "Physical fragment timeline input could not be created",
-    });
-    expect(invoked).toBe(false);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
