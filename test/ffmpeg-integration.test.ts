@@ -160,9 +160,7 @@ test("real FFmpeg creates one aligned three-rendition plaintext ladder", async (
       {
         schema: "miso.transcoder-golden/1",
         image: PINNED_FFMPEG_IMAGE,
-        prepareDigest: prepared.prepareDigest,
         sourceSha256: prepared.sourceSha256,
-        generationDigest: artifact.generationDigest,
         indexSha256: artifact.indexSha256,
         indexBase64: Buffer.from(artifact.indexBytes).toString("base64"),
         patchCount: artifact.patchCount,
