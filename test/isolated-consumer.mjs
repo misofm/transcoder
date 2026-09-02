@@ -1,4 +1,4 @@
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawn } from "node:child_process";
@@ -54,3 +54,32 @@ if (runtime === "node") {
     'await import("@misofm/transcoder"); await import("@misofm/transcoder/node"); await import("@misofm/transcoder/schema")',
   ]);
 }
+
+const installed = join(directory, "node_modules", "@misofm", "transcoder");
+const manifest = JSON.parse(await readFile(join(installed, "package.json")));
+const expectedExports = [".", "./node", "./package.json", "./schema"];
+if (
+  JSON.stringify(Object.keys(manifest.exports).sort()) !==
+  JSON.stringify(expectedExports)
+)
+  throw new Error("installed package export surface changed");
+const files = [];
+const walk = async (root, prefix = "") => {
+  for (const entry of await readdir(root, { withFileTypes: true })) {
+    const relative =
+      prefix.length === 0 ? entry.name : `${prefix}/${entry.name}`;
+    if (entry.isDirectory()) await walk(join(root, entry.name), relative);
+    else files.push(relative);
+  }
+};
+await walk(installed);
+if (
+  files.some(
+    (file) =>
+      file.startsWith("src/") ||
+      file.startsWith("test/") ||
+      file.endsWith(".map") ||
+      (file.endsWith(".ts") && !file.endsWith(".d.ts")),
+  )
+)
+  throw new Error("installed package leaked source, tests, or source maps");

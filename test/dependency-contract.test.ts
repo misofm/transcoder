@@ -51,3 +51,11 @@ test("unstable Effect process APIs cannot escape the NativeProcess adapter", asy
     }
   }
 });
+
+test("library sources have a silent observer boundary and no deployment SDK", async () => {
+  const root = new URL("../src", import.meta.url).pathname;
+  for (const file of await sourceFiles(root)) {
+    const source = await readFile(file, "utf8");
+    expect(source).not.toMatch(/console\.|process\.(?:stdout|stderr)|@mysten/u);
+  }
+});
