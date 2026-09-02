@@ -40,9 +40,10 @@
     "format:check": "prettier --check .",
     "lint": "tsc -p tsconfig.json --noEmit",
     "test": "bun test",
-    "test:unit": "bun test test/crypto.test.ts test/dependency-contract.test.ts test/fault-injection.test.ts test/ffmpeg.test.ts test/hls.test.ts test/native-process.test.ts test/profile.test.ts test/schema-artifact.test.ts test/workspace.test.ts",
+    "test:unit": "bun test test/crypto.test.ts test/dependency-contract.test.ts test/fault-injection.test.ts test/ffmpeg.test.ts test/hls.test.ts test/native-process.test.ts test/profile.test.ts test/quilt-player.test.js test/schema-artifact.test.ts test/workspace.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "pack:check": "npm pack --dry-run --json"
+    "pack:check": "npm pack --dry-run --json",
+    "player": "bun examples/quilt-player/server.js"
   },
   "dependencies": {
     "m3u8-parser": "7.2.0"

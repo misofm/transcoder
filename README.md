@@ -4,10 +4,12 @@ Local, deterministic AAC-LC fMP4 HLS preparation and Quilt artifact construction
 
 The pipeline has two explicit stages:
 
-1. One direct FFmpeg invocation creates an aligned plaintext 96/160/256 kbit/s ladder from a single decoded timeline.
+1. A codec-preview pass creates one unity-gain aligned plaintext 96/160/256 kbit/s ladder from a single decoded timeline. If every decoded rendition already satisfies the delivery ceiling it is promoted unchanged. Otherwise the largest measured true peak determines one shared, downward-only gain and the complete ladder is encoded once more in fresh staging.
 2. TypeScript derives rendition keys with the AAC Quilt v1 HKDF contract, encrypts every complete `.m4s` using HLS AES-128-CBC with implicit sequence IVs, rewrites playlists structurally, measures stored ciphertext bandwidth, and constructs and verifies the strict artifact.
 
 FFmpeg and FFprobe paths must be explicit absolute paths. Every native launch uses an executable and argv array with `shell: false`, `detached: false`, ignored stdin, bounded concurrently drained output pipes, and scoped SIGTERM-to-SIGKILL interruption. Key material is never sent to FFmpeg or placed in argv, environments, logs, filenames, or checkpoints.
+
+The archival input is never rewritten or loudness-normalized. FFmpeg 8.1.2 `loudnorm` is used only as a pinned BS.1770 analysis meter. Finite codec-preview samples above full scale are measurement evidence, not an immediate failure. Final plaintext must report at most `-1.01 dBTP` and have an exact decoded floating-point sample peak no greater than `1.0` in every rendition. A retry plans toward `-1.50 dBTP`, quantizes the shared gain downward to `0.10 dB`, applies `volume=<fixed>dB:precision=double` once before the three-way split, and fails closed if that single retry misses. `PreparedTranscode.audio` records source, preview, and output evidence in integer centi-units; silence is represented by `null` rather than a non-finite JSON value.
 
 ## Package exports
 
@@ -38,3 +40,5 @@ npm pack --dry-run
 ```
 
 FFmpeg and FFprobe 8.1.2 are required and rejected if their versions, build lines, configurations, or libav versions do not match. CI structural, encrypted-playback, and byte-level golden conformance run only in LinuxServer's `8.1.2-cli-ls76` image pinned by OCI digest.
+
+Run `bun run player` to open the local-only [Quilt Listening Room](examples/quilt-player/README.md), select an encrypted artifact directory, and audition it with a disposable external root-key copy. The example is not included in the npm package and does not add a browser runtime to the server library.

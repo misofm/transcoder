@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self'; media-src blob:; connect-src blob:; worker-src blob:; img-src data:; font-src 'none'; base-uri 'none'; form-action 'none'"
+    />
+    <title>Quilt Listening Room</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <script
+      src="./hls.min.js"
+      integrity="sha384-z+tuLqMWl1/cPv7O+39RO0EURSNvorimpcCaMgeNwU+qFBx+AlUIl7jaAwg0cYil"
+      crossorigin="anonymous"
+    ></script>
+    <script type="module" src="./player.js"></script>
+  </head>
+  <body>
+    <main>
+      <header class="masthead">
+        <p class="eyebrow">MISO / LOCAL AUDITION TOOL</p>
+        <h1>Quilt<br />Listening Room</h1>
+        <p class="lede">
+          Inspect, unlock, and audition an encrypted AAC ladder without
+          uploading its media or key.
+        </p>
+      </header>
+
+      <section class="workbench" aria-labelledby="setup-title">
+        <div class="section-heading">
+          <span>01</span>
+          <h2 id="setup-title">Load the artifact</h2>
+        </div>
+
+        <label class="drop-zone" id="drop-zone">
+          <input
+            id="quilt-input"
+            type="file"
+            webkitdirectory
+            multiple
+            aria-describedby="folder-help"
+          />
+          <span class="drop-mark" aria-hidden="true">⌁</span>
+          <strong>Choose a Quilt artifact folder</strong>
+          <small id="folder-help"
+            >Select the generation directory containing index.json and all
+            patches.</small
+          >
+        </label>
+
+        <div class="key-row">
+          <label for="root-key">Disposable root key</label>
+          <div class="key-control">
+            <input
+              id="root-key"
+              type="password"
+              inputmode="text"
+              autocomplete="off"
+              autocapitalize="off"
+              spellcheck="false"
+              maxlength="64"
+              placeholder="64 lowercase hexadecimal characters"
+            />
+            <button id="toggle-key" type="button" aria-label="Show root key">
+              Show
+            </button>
+          </div>
+          <p>
+            Used only in this page’s memory. The field is cleared after the key
+            is imported.
+          </p>
+        </div>
+
+        <button class="primary-action" id="open-button" type="button" disabled>
+          Verify &amp; open
+        </button>
+      </section>
+
+      <section class="console" aria-live="polite" aria-atomic="true">
+        <div class="status-light" id="status-light"></div>
+        <div>
+          <p class="status-label" id="status-label">Waiting for a Quilt</p>
+          <p class="status-detail" id="status-detail">
+            Nothing leaves this browser tab.
+          </p>
+        </div>
+      </section>
+
+      <section class="deck" id="deck" hidden aria-labelledby="player-title">
+        <div class="section-heading">
+          <span>02</span>
+          <h2 id="player-title">Encrypted ladder</h2>
+        </div>
+        <div class="record-card">
+          <div class="disc" aria-hidden="true"><i></i></div>
+          <div class="record-copy">
+            <p class="generation" id="generation"></p>
+            <h3 id="recording-id"></h3>
+            <dl>
+              <div>
+                <dt>Renditions</dt>
+                <dd id="rendition-count"></dd>
+              </div>
+              <div>
+                <dt>Segments</dt>
+                <dd id="segment-count"></dd>
+              </div>
+              <div>
+                <dt>Network</dt>
+                <dd id="network"></dd>
+              </div>
+              <div>
+                <dt>Index SHA-256</dt>
+                <dd id="index-hash"></dd>
+              </div>
+            </dl>
+          </div>
+        </div>
+        <audio id="audio" controls preload="metadata"></audio>
+        <div class="level-strip" id="level-strip"></div>
+        <button class="secondary-action" id="close-button" type="button">
+          Close &amp; clear memory
+        </button>
+      </section>
+    </main>
+
+    <footer>
+      <p>
+        Developer audition only. This page does not implement production key
+        authorization or publication.
+      </p>
+    </footer>
+  </body>
+</html>
