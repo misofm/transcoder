@@ -320,18 +320,16 @@ export const parseTimeline = (
       typeof packet["duration_time"] === "string"
         ? packet["duration_time"]
         : undefined;
-    if (
-      pts === undefined ||
-      dts === undefined ||
-      duration === undefined ||
-      pos === undefined ||
-      pos < 0 ||
-      duration <= 0 ||
-      ptsTime === undefined ||
-      durationTime === undefined ||
-      (previousDts !== undefined && dts <= previousDts)
-    )
-      throw invalid(subject, "Packet timestamps are missing or non-monotonic");
+    if (pts === undefined || dts === undefined || duration === undefined)
+      throw invalid(subject, "Packet integer timestamps are missing");
+    if (pos === undefined || pos < 0)
+      throw invalid(subject, "Packet byte position is missing or negative");
+    if (duration <= 0)
+      throw invalid(subject, "Packet duration is not positive");
+    if (ptsTime === undefined || durationTime === undefined)
+      throw invalid(subject, "Packet decimal timestamps are missing");
+    if (previousDts !== undefined && dts <= previousDts)
+      throw invalid(subject, "Packet decode timestamps are non-monotonic");
     previousDts = dts;
     totalSamples += duration;
     if (!Number.isSafeInteger(totalSamples))
