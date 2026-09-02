@@ -16,7 +16,7 @@ FFmpeg and FFprobe paths must be explicit absolute paths. Every native launch us
 - `@misofm/transcoder/schema` — the vendored schema and strict cross-field validator.
 - `@misofm/transcoder/package.json` — package metadata.
 
-See [the normative AAC Quilt v1 contract](docs/aac-transcode-quilt-v1.md). The caller generates and durably protects a fresh 32-byte root key and generation nonce before finalization. `finalize` consumes the supplied root-key array and overwrites that exact array on success, failure, defect, or interruption; it returns only the artifact. JavaScript zeroization is best effort because aliases and runtime-internal copies cannot be controlled.
+See [the normative AAC Quilt v1 contract](docs/aac-transcode-quilt-v1.md). The caller generates and durably protects a fresh 32-byte root key and generation nonce before finalization, then passes a disposable working copy such as `rootKey: retainedRootKey.slice()`. `finalize` consumes the supplied root-key array and overwrites that exact array on success, failure, defect, or interruption; it returns only the artifact. JavaScript zeroization is best effort because aliases and runtime-internal copies cannot be controlled.
 
 ## Security and scope
 

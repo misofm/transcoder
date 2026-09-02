@@ -115,7 +115,7 @@ recovery of the root key are outside this contract.
 ```text
 keyId = hex(HMAC-SHA256(
   key = rootKey,
-  data = UTF8("miso.aac-transcode-quilt/key-id/1\0") || recordingId || generationNonce
+  data = UTF8("miso.aac-transcode-quilt/key-id/1\0") || decode_hex(recordingId) || generationNonce
 ))
 ```
 

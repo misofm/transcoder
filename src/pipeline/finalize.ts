@@ -703,22 +703,6 @@ export const finalizeTranscode = (
   QuiltArtifact,
   CryptoError | ArtifactValidationError | WorkspaceIoError
 > => {
-  const configured = request.prepared.segmentTargetMs;
-  const concurrency = request.encryptionConcurrency ?? 4;
-  if (
-    !Number.isSafeInteger(concurrency) ||
-    concurrency < 1 ||
-    concurrency > MAX_ENCRYPTION_CONCURRENCY ||
-    configured < 6_000
-  ) {
-    material.rootKey.fill(0);
-    return Effect.fail(
-      artifactError(
-        "encryptionConcurrency",
-        "Encryption concurrency is outside the supported range",
-      ),
-    );
-  }
   const mapFailure = (
     error: unknown,
   ): CryptoError | ArtifactValidationError | WorkspaceIoError =>
@@ -748,34 +732,60 @@ export const finalizeTranscode = (
             basename(request.prepared.rootPath),
             "Finalization failed without exposing sensitive details",
           );
-  return Effect.callback<
-    QuiltArtifact,
-    CryptoError | ArtifactValidationError | WorkspaceIoError
-  >((resume, signal) => {
-    // Snapshot caller-owned inputs before the first asynchronous boundary. The
-    // caller's root-key array is still consumed and zeroed below, while this
-    // private copy prevents concurrent mutation from changing a generation.
-    const ownedMaterial: GenerationMaterial = {
-      generationNonce: Uint8Array.from(material.generationNonce),
-      rootKey: Uint8Array.from(material.rootKey),
-    };
-    const worker = finalizeUnsafe(
-      request,
-      ownedMaterial,
-      concurrency,
-      signal,
-    ).finally(() => ownedMaterial.rootKey.fill(0));
-    void worker.then(
-      (artifact) => resume(Effect.succeed(artifact)),
-      (error) => resume(Effect.fail(mapFailure(error))),
-    );
-    // Interruption aborts the worker and waits for its cleanup/commit
-    // reconciliation before the surrounding workspace lock may be released.
-    return Effect.promise(async () => {
-      await worker.then(
-        () => undefined,
-        () => undefined,
+  return Effect.suspend(() => {
+    const configured = request.prepared.segmentTargetMs;
+    const concurrency = request.encryptionConcurrency ?? 4;
+    if (
+      !Number.isSafeInteger(concurrency) ||
+      concurrency < 1 ||
+      concurrency > MAX_ENCRYPTION_CONCURRENCY ||
+      configured < 6_000
+    )
+      return Effect.fail(
+        artifactError(
+          "encryptionConcurrency",
+          "Encryption concurrency is outside the supported range",
+        ),
       );
+    if (
+      material.rootKey.byteLength !== 32 ||
+      material.generationNonce.byteLength !== 32
+    )
+      return Effect.fail(
+        cryptoError(
+          "generationMaterial",
+          "Root key and generation nonce must each contain exactly 32 bytes",
+        ),
+      );
+    return Effect.callback<
+      QuiltArtifact,
+      CryptoError | ArtifactValidationError | WorkspaceIoError
+    >((resume, signal) => {
+      // Snapshot validated inputs before the first asynchronous boundary, then
+      // consume the caller's working key immediately.
+      const ownedMaterial: GenerationMaterial = {
+        generationNonce: Uint8Array.from(material.generationNonce),
+        rootKey: Uint8Array.from(material.rootKey),
+      };
+      material.rootKey.fill(0);
+      const worker = finalizeUnsafe(
+        request,
+        ownedMaterial,
+        concurrency,
+        signal,
+      ).finally(() => ownedMaterial.rootKey.fill(0));
+      void worker.then(
+        (artifact) => resume(Effect.succeed(artifact)),
+        (error) => resume(Effect.fail(mapFailure(error))),
+      );
+      // Interruption aborts the worker and waits for its cleanup/commit
+      // reconciliation before the surrounding workspace lock may be released.
+      return Effect.promise(async () => {
+        await worker.then(
+          () => undefined,
+          () => undefined,
+        );
+      });
     });
   }).pipe(Effect.ensuring(Effect.sync(() => material.rootKey.fill(0))));
 };

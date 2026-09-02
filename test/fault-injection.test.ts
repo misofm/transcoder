@@ -62,17 +62,15 @@ test("failed finalization zeroes the owned key and cannot promote partial output
     },
   };
   const rootKey = new Uint8Array(32).fill(7);
-  await expect(
-    Effect.runPromise(
-      finalizeTranscode(
-        { prepared, recordingId: `0x${"01".repeat(32)}`, network: "testnet" },
-        {
-          generationNonce: new Uint8Array(32).fill(8),
-          rootKey,
-        },
-      ),
-    ),
-  ).rejects.toBeDefined();
+  const finalization = finalizeTranscode(
+    { prepared, recordingId: `0x${"01".repeat(32)}`, network: "testnet" },
+    {
+      generationNonce: new Uint8Array(32).fill(8),
+      rootKey,
+    },
+  );
+  expect(rootKey).toEqual(new Uint8Array(32).fill(7));
+  await expect(Effect.runPromise(finalization)).rejects.toBeDefined();
   expect(rootKey).toEqual(new Uint8Array(32));
   const generations = join(workspace, "generations");
   expect(
