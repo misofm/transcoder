@@ -180,9 +180,7 @@ test("real FFmpeg creates one aligned three-rendition plaintext ladder", async (
       "./fixtures/linuxserver-ffmpeg-8.1.2.golden.json",
       import.meta.url,
     );
-    if (process.env["MISO_UPDATE_GOLDEN"] === "1")
-      await writeFile(goldenUrl, golden);
-    else expect(await readFile(goldenUrl, "utf8")).toBe(golden);
+    expect(await readFile(goldenUrl, "utf8")).toBe(golden);
   }
   const verificationRootKey = Uint8Array.from(
     { length: 32 },

@@ -79,13 +79,6 @@ jobs:
           MISO_FFMPEG: /usr/local/bin/ffmpeg
           MISO_FFPROBE: /usr/local/bin/ffprobe
           MISO_PINNED_FFMPEG: "1"
-          MISO_UPDATE_GOLDEN: "1"
           MISO_HLS_SMOKE: "1"
           MISO_CHROMIUM_PATH: /opt/google/chrome/chrome
         run: bun test test/ffmpeg-integration.test.ts
-      - name: Upload generated golden
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: linuxserver-ffmpeg-8.1.2-golden
-          path: test/fixtures/linuxserver-ffmpeg-8.1.2.golden.json
-          retention-days: 1

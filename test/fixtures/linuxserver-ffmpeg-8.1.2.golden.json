@@ -1,1 +1,107 @@
-{}
+{
+  "schema": "miso.transcoder-golden/1",
+  "image": "ghcr.io/linuxserver/ffmpeg:8.1.2-cli-ls76@sha256:2e7000921be8de2704a4f27dfd3d988562697a346eaabb937a81046c306f0af7",
+  "prepareDigest": "d9aa9b3caf2ca8d4b179fbae10baf3b8a60bb9884f3952927f2d1577569e2e08",
+  "sourceSha256": "306e1210f2f05ee3baf5cd4aef85cc8a4672219f605ddd4afb1753dc7eb18c7d",
+  "generationDigest": "0588c09cf8bf1fa6208fa9da2cd91b1145858ccb5bf46dfabb120a58abba9b16",
+  "indexSha256": "13e01491c205d97becf9caf2912f4a17fd6cd2cbc357b889ef5739f42026549e",
+  "indexBase64": "ewogICJzY2hlbWEiOiAibWlzby5hYWMtdHJhbnNjb2RlLXF1aWx0LzEiLAogICJuZXR3b3JrIjogInRlc3RuZXQiLAogICJyZWNvcmRpbmdJZCI6ICIweDAxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMDEiLAogICJnZW5lcmF0aW9uIjogIl9fNzlfUHY2LWZqMzl2WDA4X0x4OE9fdTdlenI2dW5vNS1ibDVPUGk0ZUEiLAogICJtYXN0ZXJQbGF5bGlzdCI6ICJtYXN0ZXIubTN1OCIsCiAgImtleSI6IHsKICAgICJpZGVudGlmaWVyIjogImtleS5zZWFsIiwKICAgICJieXRlcyI6IDE2LAogICAgInNoYTI1NiI6ICI4MzY5MWFhYjRhOTA4YWFkYTE3Nzc2ZGFlMThmOGM1OTVhNmE3MjZhZmIyYjQ1MDY2MmI0MTU2MzJlZTZiYzA4IgogIH0sCiAgInNlZ21lbnRUYXJnZXRNcyI6IDYwMDAsCiAgInBhdGNoQ291bnQiOiAxNSwKICAiZW5jcnlwdGlvbiI6IHsKICAgICJzY2hlbWUiOiAiaGxzLWFlcy0xMjgtY2JjLWhrZGYvMSIsCiAgICAia2RmIjogImhrZGYtc2hhMjU2IiwKICAgICJzZWFsUGxhaW50ZXh0Qnl0ZXMiOiAzMgogIH0sCiAgInJlbmRpdGlvbnMiOiBbCiAgICB7CiAgICAgICJpZCI6ICJhYWMtMDk2IiwKICAgICAgImNvZGVjIjogIm1wNGEuNDAuMiIsCiAgICAgICJub21pbmFsQml0cmF0ZSI6IDk2MDAwLAogICAgICAiYXZlcmFnZUJhbmR3aWR0aCI6IDk4MzkzLAogICAgICAicGVha0JhbmR3aWR0aCI6IDEwMTEyNywKICAgICAgInNhbXBsZVJhdGVIeiI6IDQ4MDAwLAogICAgICAiY2hhbm5lbHMiOiAyLAogICAgICAicGxheWxpc3QiOiAiYWFjLTA5Ni5tM3U4IiwKICAgICAgImluaXQiOiB7CiAgICAgICAgImlkZW50aWZpZXIiOiAiYWFjLTA5Ni1pbml0Lm1wNCIsCiAgICAgICAgImJ5dGVzIjogNzY1LAogICAgICAgICJzaGEyNTYiOiAiMjlhNzFhYTBjYTM4YjkyZTEwZTUwMzU2ZDBiNzU1NTEwM2RmZWFmZWI4MzRmMjgzNWMyMTY0YTcwNjY3N2VhZiIKICAgICAgfSwKICAgICAgInNlZ21lbnRzIjogWwogICAgICAgIHsKICAgICAgICAgICJzZXF1ZW5jZSI6IDAsCiAgICAgICAgICAiaWRlbnRpZmllciI6ICJhYWMtMDk2LTAwMDAwLm00cyIsCiAgICAgICAgICAiZHVyYXRpb25NcyI6IDYwMTYsCiAgICAgICAgICAicGxhaW5CeXRlcyI6IDczNjM1LAogICAgICAgICAgImNpcGhlckJ5dGVzIjogNzM2NDgsCiAgICAgICAgICAiY2lwaGVydGV4dFNoYTI1NiI6ICJjMzRmYzRjMzNkZGY4NGVlOTZjZDE5ODhiODE0YTY3YWUwMmNjY2NiYjQxOGUzODFlZWVkZjdhM2FkY2MwNDU4IgogICAgICAgIH0sCiAgICAgICAgewogICAgICAgICAgInNlcXVlbmNlIjogMSwKICAgICAgICAgICJpZGVudGlmaWVyIjogImFhYy0wOTYtMDAwMDEubTRzIiwKICAgICAgICAgICJkdXJhdGlvbk1zIjogMTAwNSwKICAgICAgICAgICJwbGFpbkJ5dGVzIjogMTI3MDEsCiAgICAgICAgICAiY2lwaGVyQnl0ZXMiOiAxMjcwNCwKICAgICAgICAgICJjaXBoZXJ0ZXh0U2hhMjU2IjogIjhiY2RlMGRkYmUzZjMxZWMxMmE4NjU0ZGJkNWJiM2ZlNTRlNTVmYmJlOGY5MGIzZWU0ZDNkZjNlMmM5ODEyNTEiCiAgICAgICAgfQogICAgICBdCiAgICB9LAogICAgewogICAgICAiaWQiOiAiYWFjLTE2MCIsCiAgICAgICJjb2RlYyI6ICJtcDRhLjQwLjIiLAogICAgICAibm9taW5hbEJpdHJhdGUiOiAxNjAwMDAsCiAgICAgICJhdmVyYWdlQmFuZHdpZHRoIjogMTYyMDc0LAogICAgICAicGVha0JhbmR3aWR0aCI6IDE2NDQyNiwKICAgICAgInNhbXBsZVJhdGVIeiI6IDQ4MDAwLAogICAgICAiY2hhbm5lbHMiOiAyLAogICAgICAicGxheWxpc3QiOiAiYWFjLTE2MC5tM3U4IiwKICAgICAgImluaXQiOiB7CiAgICAgICAgImlkZW50aWZpZXIiOiAiYWFjLTE2MC1pbml0Lm1wNCIsCiAgICAgICAgImJ5dGVzIjogNzY1LAogICAgICAgICJzaGEyNTYiOiAiOTg1OGUxMmI0OThhM2M5MDI0MTAyZmViNWFjM2RkOWY5ZjUxYzNmMTdlMWE1MGE5NmNmYTI5NDg3MTUwMzBmMyIKICAgICAgfSwKICAgICAgInNlZ21lbnRzIjogWwogICAgICAgIHsKICAgICAgICAgICJzZXF1ZW5jZSI6IDAsCiAgICAgICAgICAiaWRlbnRpZmllciI6ICJhYWMtMTYwLTAwMDAwLm00cyIsCiAgICAgICAgICAiZHVyYXRpb25NcyI6IDYwMTYsCiAgICAgICAgICAicGxhaW5CeXRlcyI6IDEyMTU3NSwKICAgICAgICAgICJjaXBoZXJCeXRlcyI6IDEyMTU4NCwKICAgICAgICAgICJjaXBoZXJ0ZXh0U2hhMjU2IjogIjM5ZjM2ZDFkOGQxMTAxMmRmZTQwNzU3M2FmZTA4YTUzNGI0YTJmY2VmZmNlNGQ4YzkwZDExZWMyNzVhYmIyNWIiCiAgICAgICAgfSwKICAgICAgICB7CiAgICAgICAgICAic2VxdWVuY2UiOiAxLAogICAgICAgICAgImlkZW50aWZpZXIiOiAiYWFjLTE2MC0wMDAwMS5tNHMiLAogICAgICAgICAgImR1cmF0aW9uTXMiOiAxMDA1LAogICAgICAgICAgInBsYWluQnl0ZXMiOiAyMDY1MywKICAgICAgICAgICJjaXBoZXJCeXRlcyI6IDIwNjU2LAogICAgICAgICAgImNpcGhlcnRleHRTaGEyNTYiOiAiM2I0ZWE1YzYwMDJkN2ZmN2Y5MjA4YzVlZTlkMGEzYzY0NWU1OGU0ZjA2NWEzNWJmNWE5ZTM1YTRhMDIxMGQ4NSIKICAgICAgICB9CiAgICAgIF0KICAgIH0sCiAgICB7CiAgICAgICJpZCI6ICJhYWMtMjU2IiwKICAgICAgImNvZGVjIjogIm1wNGEuNDAuMiIsCiAgICAgICJub21pbmFsQml0cmF0ZSI6IDI1NjAwMCwKICAgICAgImF2ZXJhZ2VCYW5kd2lkdGgiOiAyNDIyMzYsCiAgICAgICJwZWFrQmFuZHdpZHRoIjogMjQ0NDEwLAogICAgICAic2FtcGxlUmF0ZUh6IjogNDgwMDAsCiAgICAgICJjaGFubmVscyI6IDIsCiAgICAgICJwbGF5bGlzdCI6ICJhYWMtMjU2Lm0zdTgiLAogICAgICAiaW5pdCI6IHsKICAgICAgICAiaWRlbnRpZmllciI6ICJhYWMtMjU2LWluaXQubXA0IiwKICAgICAgICAiYnl0ZXMiOiA3NjUsCiAgICAgICAgInNoYTI1NiI6ICJmNjIyNjBmOWM3MmE1NDNjNWIzZWUwNTM5Y2Q4YmYwYjVlMTlkYTI1NDAxMTAzNjhjMTE3YzcyNTQ5MGVlNGRkIgogICAgICB9LAogICAgICAic2VnbWVudHMiOiBbCiAgICAgICAgewogICAgICAgICAgInNlcXVlbmNlIjogMCwKICAgICAgICAgICJpZGVudGlmaWVyIjogImFhYy0yNTYtMDAwMDAubTRzIiwKICAgICAgICAgICJkdXJhdGlvbk1zIjogNjAxNiwKICAgICAgICAgICJwbGFpbkJ5dGVzIjogMTgxODc5LAogICAgICAgICAgImNpcGhlckJ5dGVzIjogMTgxODg4LAogICAgICAgICAgImNpcGhlcnRleHRTaGEyNTYiOiAiZGI1M2M0MzllYmRhZDNiMGExNjQ1NjA2ODJmOTI1MjI5ZTE4NWFiN2E1ZmRhMjliODI5YTYzMDAzZWQwNjJkYyIKICAgICAgICB9LAogICAgICAgIHsKICAgICAgICAgICJzZXF1ZW5jZSI6IDEsCiAgICAgICAgICAiaWRlbnRpZmllciI6ICJhYWMtMjU2LTAwMDAxLm00cyIsCiAgICAgICAgICAiZHVyYXRpb25NcyI6IDEwMDUsCiAgICAgICAgICAicGxhaW5CeXRlcyI6IDMwNjkzLAogICAgICAgICAgImNpcGhlckJ5dGVzIjogMzA3MDQsCiAgICAgICAgICAiY2lwaGVydGV4dFNoYTI1NiI6ICI4ZmQwZWNiMGQ1MDA3NDkxMTEzN2IxZmRlZTY0YmQyODk4YjMzZmE3MjI1YmZlMDAzZDM3OTA0NWM5YmI1MDkxIgogICAgICAgIH0KICAgICAgXQogICAgfQogIF0KfQo=",
+  "patchCount": 15,
+  "patches": [
+    {
+      "identifier": "index.json",
+      "bytes": 3611,
+      "sha256": "13e01491c205d97becf9caf2912f4a17fd6cd2cbc357b889ef5739f42026549e"
+    },
+    {
+      "identifier": "master.m3u8",
+      "bytes": 300,
+      "sha256": "f84a5232d3181b41375b1867ccc2260ad4a71dea441efee95d3be0f558417da1"
+    },
+    {
+      "identifier": "key.seal",
+      "bytes": 16,
+      "sha256": "83691aab4a908aada17776dae18f8c595a6a726afb2b450662b415632ee6bc08"
+    },
+    {
+      "identifier": "aac-096.m3u8",
+      "bytes": 278,
+      "sha256": "128eb60ca8b263f5525e58e8cc71964de733ba84b39c3206444af22c1c8f5487"
+    },
+    {
+      "identifier": "aac-096-init.mp4",
+      "bytes": 765,
+      "sha256": "29a71aa0ca38b92e10e50356d0b7555103dfeafeb834f2835c2164a706677eaf"
+    },
+    {
+      "identifier": "aac-096-00000.m4s",
+      "bytes": 73648,
+      "sha256": "c34fc4c33ddf84ee96cd1988b814a67ae02ccccbb418e381eeedf7a3adcc0458"
+    },
+    {
+      "identifier": "aac-096-00001.m4s",
+      "bytes": 12704,
+      "sha256": "8bcde0ddbe3f31ec12a8654dbd5bb3fe54e55fbbe8f90b3ee4d3df3e2c981251"
+    },
+    {
+      "identifier": "aac-160.m3u8",
+      "bytes": 278,
+      "sha256": "ed7cec600ce0cd9a7e73439f09e2b8c15e6acb724daaec0ed130e37e44ad13d7"
+    },
+    {
+      "identifier": "aac-160-init.mp4",
+      "bytes": 765,
+      "sha256": "9858e12b498a3c9024102feb5ac3dd9f9f51c3f17e1a50a96cfa2948715030f3"
+    },
+    {
+      "identifier": "aac-160-00000.m4s",
+      "bytes": 121584,
+      "sha256": "39f36d1d8d11012dfe407573afe08a534b4a2fceffce4d8c90d11ec275abb25b"
+    },
+    {
+      "identifier": "aac-160-00001.m4s",
+      "bytes": 20656,
+      "sha256": "3b4ea5c6002d7ff7f9208c5ee9d0a3c645e58e4f065a35bf5a9e35a4a0210d85"
+    },
+    {
+      "identifier": "aac-256.m3u8",
+      "bytes": 278,
+      "sha256": "3ec46437eacc6e1632dda1d9210c1d8e0dcbc329ecb787c0df7e04d289db4ebc"
+    },
+    {
+      "identifier": "aac-256-init.mp4",
+      "bytes": 765,
+      "sha256": "f62260f9c72a543c5b3ee0539cd8bf0b5e19da2540110368c117c725490ee4dd"
+    },
+    {
+      "identifier": "aac-256-00000.m4s",
+      "bytes": 181888,
+      "sha256": "db53c439ebdad3b0a164560682f925229e185ab7a5fda29b829a63003ed062dc"
+    },
+    {
+      "identifier": "aac-256-00001.m4s",
+      "bytes": 30704,
+      "sha256": "8fd0ecb0d50074911137b1fdee64bd2898b33fa7225bfe003d379045c9bb5091"
+    }
+  ],
+  "toolchain": {
+    "ffmpegPath": "/usr/local/bin/ffmpeg",
+    "ffprobePath": "/usr/local/bin/ffprobe",
+    "ffmpegVersion": "ffmpeg version 8.1.2 Copyright (c) 2000-2026 the FFmpeg developers",
+    "ffmpegBuild": "built with gcc 13 (Ubuntu 13.3.0-6ubuntu2~24.04.1)",
+    "ffprobeVersion": "ffprobe version 8.1.2 Copyright (c) 2007-2026 the FFmpeg developers",
+    "ffprobeBuild": "built with gcc 13 (Ubuntu 13.3.0-6ubuntu2~24.04.1)",
+    "configuration": "configuration: --disable-debug --disable-doc --disable-ffplay --enable-alsa --enable-cuda-llvm --enable-cuvid --enable-ffprobe --enable-gpl --enable-libaom --enable-libass --enable-libdav1d --enable-libfdk_aac --enable-libfontconfig --enable-libfreetype --enable-libfribidi --enable-libharfbuzz --enable-libkvazaar --enable-liblc3 --enable-libmp3lame --enable-libopencore-amrnb --enable-libopencore-amrwb --enable-libopenjpeg --enable-libopus --enable-libplacebo --enable-librav1e --enable-librist --enable-libshaderc --enable-libsoxr --enable-libsrt --enable-libsvtav1 --enable-libtheora --enable-libv4l2 --enable-libvidstab --enable-libvmaf --enable-libvorbis --enable-libvpl --enable-libvpx --enable-libvvenc --enable-libwebp --enable-libx264 --enable-libx265 --enable-libxml2 --enable-libxvid --enable-libzimg --enable-libzmq --enable-nonfree --enable-nvdec --enable-nvenc --enable-opencl --enable-openssl --enable-stripping --enable-vaapi --enable-vdpau --enable-version3 --enable-vulkan",
+    "libavcodecVersion": "62. 28.102 / 62. 28.102",
+    "libavformatVersion": "62. 12.102 / 62. 12.102",
+    "capabilities": [
+      "aac-encoder:native",
+      "hls-muxer",
+      "hls-segment-type:fmp4",
+      "hls-var-stream-map",
+      "hls-named-variant-template",
+      "ffprobe-output:json"
+    ],
+    "sha256": "f593d49f4f2efb20567de7f8644a5d0dd7fb06fc3f6d49de4f1b39b5e3920b2e"
+  }
+}
