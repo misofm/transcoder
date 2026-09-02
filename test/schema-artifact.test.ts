@@ -103,6 +103,15 @@ test("rejects unknown keys and cross-field mismatches", () => {
   expect(() =>
     assertQuiltIndex({ ...index, patchCount: 15, renditions: twoSegments }),
   ).toThrow();
+  expect(() =>
+    assertQuiltIndex({
+      ...index,
+      renditions: renditions.map((rendition) => ({
+        ...rendition,
+        segments: [{ ...rendition.segments[0]!, durationMs: 10_000 }],
+      })),
+    }),
+  ).toThrow();
   const duplicate = new TextEncoder().encode(
     new TextDecoder()
       .decode(canonicalIndexBytes(index))

@@ -224,6 +224,8 @@ test.each([
     playlistPath,
     '#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:1\n#EXT-X-PLAYLIST-TYPE:VOD\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-MAP:URI="aac-096-init.mp4"\n#EXTINF:1.000,\naac-096-00000.m4s\n#EXT-X-ENDLIST\n',
   );
+  await writeFile(join(root, "aac-096-init.mp4"), "i");
+  await writeFile(join(root, "aac-096-00000.m4s"), "s");
   const timeline = new TextEncoder().encode(
     JSON.stringify({
       streams: [
@@ -241,6 +243,7 @@ test.each([
           pts: 0,
           dts: 0,
           duration: 48000,
+          pos: 1,
           pts_time: "0.000000",
           duration_time: "1.000000",
         },

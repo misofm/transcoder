@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
-import { createReadStream } from "node:fs";
-import { chmod, lstat, mkdir, readFile, readdir, rm } from "node:fs/promises";
+import { constants } from "node:fs";
+import { chmod, lstat, mkdir, open, readdir, rm } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 
 import { Effect } from "effect";
@@ -86,9 +86,37 @@ const playlistFailure = (subject: string, message: string) =>
   });
 
 const hashFile = async (path: string): Promise<string> => {
-  const hash = createHash("sha256");
-  for await (const chunk of createReadStream(path)) hash.update(chunk);
-  return hash.digest("hex");
+  const handle = await open(
+    path,
+    constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0),
+  );
+  try {
+    if (!(await handle.stat()).isFile()) throw new TypeError();
+    const hash = createHash("sha256");
+    for await (const chunk of handle.createReadStream({ autoClose: false }))
+      hash.update(chunk);
+    return hash.digest("hex");
+  } finally {
+    await handle.close();
+  }
+};
+
+const readBoundedFile = async (
+  path: string,
+  maximum: number,
+): Promise<Buffer> => {
+  const handle = await open(
+    path,
+    constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0),
+  );
+  try {
+    const metadata = await handle.stat();
+    if (!metadata.isFile() || metadata.size < 1 || metadata.size > maximum)
+      throw new RangeError("file outside bounded read limit");
+    return await handle.readFile();
+  } finally {
+    await handle.close();
+  }
 };
 
 const sourceIdentity = (value: {
@@ -206,8 +234,7 @@ const readWorkspacePrepareDigest = async (
 ): Promise<string | undefined> => {
   try {
     const path = join(workspacePath, "workspace.json");
-    const bytes = await readFile(path);
-    if (bytes.byteLength > 64 * 1024) throw new TypeError();
+    const bytes = await readBoundedFile(path, 64 * 1024);
     return parseWorkspaceState(
       new TextDecoder("utf-8", { fatal: true }).decode(bytes),
     ).prepareDigest;
@@ -230,7 +257,9 @@ const validatePlaylistSet = async (
   allowCheckpoint: boolean,
 ): Promise<readonly MediaPlaylist[]> => {
   try {
-    assertMasterPlaylistParses(await readFile(join(rootPath, "master.m3u8")));
+    assertMasterPlaylistParses(
+      await readBoundedFile(join(rootPath, "master.m3u8"), 1_048_576),
+    );
   } catch {
     throw playlistFailure("master.m3u8", "Master playlist validation failed");
   }
@@ -241,7 +270,7 @@ const validatePlaylistSet = async (
     const name = `${rendition.id}.m3u8`;
     expected.add(name);
     const playlist = parsePlaintextMediaPlaylist(
-      await readFile(join(rootPath, name)),
+      await readBoundedFile(join(rootPath, name), 1_048_576),
     );
     if (playlist.mapIdentifier !== `${rendition.id}-init.mp4`)
       throw playlistFailure(name, "Unexpected init identifier");
@@ -460,7 +489,12 @@ export const prepareTranscode = (
               try {
                 return parsePreparedCheckpoint(
                   JSON.parse(
-                    await readFile(join(target, "prepared.json"), "utf8"),
+                    (
+                      await readBoundedFile(
+                        join(target, "prepared.json"),
+                        4_194_304,
+                      )
+                    ).toString("utf8"),
                   ),
                   expectedCheckpoint,
                 );
@@ -711,7 +745,12 @@ export const verifyPreparedTranscode = (
     const checkpoint = yield* Effect.tryPromise({
       try: async () => {
         const value: unknown = JSON.parse(
-          await readFile(join(prepared.rootPath, "prepared.json"), "utf8"),
+          (
+            await readBoundedFile(
+              join(prepared.rootPath, "prepared.json"),
+              4_194_304,
+            )
+          ).toString("utf8"),
         );
         if (typeof value !== "object" || value === null || Array.isArray(value))
           throw new TypeError();

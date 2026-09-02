@@ -294,6 +294,19 @@ export const assertQuiltIndex: (
       throw new TypeError(
         "non-final segment is outside one AAC frame of target",
       );
+    if (
+      sequence === (lengths[0] ?? 0) - 1 &&
+      (durations[0] ?? 0) >
+        Math.min(
+          10_000,
+          (index.segmentTargetMs as number) +
+            Math.ceil(
+              (1_024 * 1_000) /
+                (validatedRenditions[0]?.sampleRateHz ?? Number.NaN),
+            ),
+        )
+    )
+      throw new TypeError("final segment exceeds target plus one AAC frame");
   }
   const allIdentifiers = [
     "index.json",

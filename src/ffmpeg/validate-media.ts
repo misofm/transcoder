@@ -1,11 +1,33 @@
 import { Effect } from "effect";
-import { readFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { lstat, open } from "node:fs/promises";
+import { dirname, join } from "node:path";
 
 import { MediaValidationError, type NativeProcessError } from "../errors.js";
 import type { NativeProcessService } from "../process/native-process.js";
 import { parsePlaintextMediaPlaylist } from "../hls/playlist.js";
 
 const PACKET_JSON_LIMIT = 16 * 1024 * 1024;
+const PLAYLIST_LIMIT = 1_048_576;
+
+const readPlaylist = async (path: string): Promise<Buffer> => {
+  const handle = await open(
+    path,
+    constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0),
+  );
+  try {
+    const metadata = await handle.stat();
+    if (
+      !metadata.isFile() ||
+      metadata.size < 1 ||
+      metadata.size > PLAYLIST_LIMIT
+    )
+      throw new RangeError();
+    return await handle.readFile();
+  } finally {
+    await handle.close();
+  }
+};
 
 export interface TimelineValidation {
   readonly intervals: readonly string[];
@@ -30,7 +52,7 @@ const packetArgs = (playlistPath: string): readonly string[] => [
   "-show_streams",
   "-show_packets",
   "-show_entries",
-  "stream=codec_name,profile,codec_tag_string,sample_rate,channels,time_base:packet=pts,dts,duration,pts_time,duration_time",
+  "stream=codec_name,profile,codec_tag_string,sample_rate,channels,time_base:packet=pts,dts,duration,pos,pts_time,duration_time",
   "-of",
   "json",
   playlistPath,
@@ -48,6 +70,7 @@ export const parseTimeline = (
   sampleRateHz: 44_100 | 48_000,
   durationMs: number,
   segmentDurationsMs: readonly number[],
+  segmentEndPositions: readonly number[],
 ): TimelineValidation => {
   let decoded: unknown;
   try {
@@ -90,6 +113,7 @@ export const parseTimeline = (
   const packetRecords: Array<{
     readonly pts: number;
     readonly duration: number;
+    readonly pos: number;
   }> = [];
   for (const packetValue of packets) {
     if (typeof packetValue !== "object" || packetValue === null)
@@ -98,6 +122,7 @@ export const parseTimeline = (
     const pts = parseInteger(packet["pts"]);
     const dts = parseInteger(packet["dts"]);
     const duration = parseInteger(packet["duration"]);
+    const pos = parseInteger(packet["pos"]);
     const ptsTime =
       typeof packet["pts_time"] === "string" ? packet["pts_time"] : undefined;
     const durationTime =
@@ -108,6 +133,8 @@ export const parseTimeline = (
       pts === undefined ||
       dts === undefined ||
       duration === undefined ||
+      pos === undefined ||
+      pos < 0 ||
       duration <= 0 ||
       ptsTime === undefined ||
       durationTime === undefined ||
@@ -119,7 +146,7 @@ export const parseTimeline = (
     if (!Number.isSafeInteger(totalSamples))
       throw invalid(subject, "Total sample count exceeds safe bounds");
     intervals.push(`${ptsTime}/${durationTime}`);
-    packetRecords.push({ pts, duration });
+    packetRecords.push({ pts, duration, pos });
   }
   const expectedSamples = Math.round((durationMs * sampleRateHz) / 1_000);
   if (Math.abs(totalSamples - expectedSamples) > 1_024)
@@ -127,32 +154,33 @@ export const parseTimeline = (
   const segmentIntervals: string[] = [];
   let packetIndex = 0;
   let consumedSamples = 0;
-  let declaredMs = 0;
   for (const [position, segmentDurationMs] of segmentDurationsMs.entries()) {
-    declaredMs += segmentDurationMs;
-    const boundary =
-      position === segmentDurationsMs.length - 1
-        ? totalSamples
-        : Math.round((declaredMs * sampleRateHz) / 1_000);
+    const endPosition = segmentEndPositions[position];
     const first = packetRecords[packetIndex];
-    const remainingSegments = segmentDurationsMs.length - position - 1;
+    const initialSamples = consumedSamples;
     while (
-      packetIndex < packetRecords.length - remainingSegments &&
-      consumedSamples < boundary
+      packetIndex < packetRecords.length &&
+      endPosition !== undefined &&
+      packetRecords[packetIndex]!.pos < endPosition
     ) {
       consumedSamples += packetRecords[packetIndex]!.duration;
       packetIndex += 1;
     }
     const last = packetRecords[packetIndex - 1];
+    const segmentSamples = consumedSamples - initialSamples;
+    const declaredSamples = Math.round(
+      (segmentDurationMs * sampleRateHz) / 1_000,
+    );
     if (
+      endPosition === undefined ||
       first === undefined ||
       last === undefined ||
-      Math.abs(consumedSamples - boundary) >
+      Math.abs(segmentSamples - declaredSamples) >
         1_024 + Math.ceil(sampleRateHz / 1_000)
     )
       throw invalid(subject, "Segment boundary is not aligned to AAC samples");
     segmentIntervals.push(
-      `${first.pts}:${last.pts + last.duration}:${consumedSamples}`,
+      `${first.pts}:${last.pts + last.duration}:${segmentSamples}`,
     );
   }
   if (packetIndex !== packetRecords.length)
@@ -172,11 +200,31 @@ export const validatePlaintextRendition = (
   NativeProcessError | MediaValidationError
 > =>
   Effect.gen(function* () {
-    const segmentDurationsMs = yield* Effect.tryPromise({
-      try: async () =>
-        parsePlaintextMediaPlaylist(await readFile(playlistPath)).segments.map(
-          (segment) => segment.durationMs,
-        ),
+    const playlistEvidence = yield* Effect.tryPromise({
+      try: async () => {
+        const playlist = parsePlaintextMediaPlaylist(
+          await readPlaylist(playlistPath),
+        );
+        const directory = dirname(playlistPath);
+        const init = await lstat(join(directory, playlist.mapIdentifier));
+        if (!init.isFile() || init.isSymbolicLink()) throw new TypeError();
+        let position = init.size;
+        const segmentEndPositions: number[] = [];
+        for (const segment of playlist.segments) {
+          const metadata = await lstat(join(directory, segment.identifier));
+          if (!metadata.isFile() || metadata.isSymbolicLink())
+            throw new TypeError();
+          position += metadata.size;
+          if (!Number.isSafeInteger(position)) throw new TypeError();
+          segmentEndPositions.push(position);
+        }
+        return {
+          segmentDurationsMs: playlist.segments.map(
+            (segment) => segment.durationMs,
+          ),
+          segmentEndPositions,
+        };
+      },
       catch: () => invalid(playlistPath, "Playlist timeline cannot be parsed"),
     });
     const packetResult = yield* process.run({
@@ -192,7 +240,8 @@ export const validatePlaintextRendition = (
           packetResult.stdout,
           sampleRateHz,
           durationMs,
-          segmentDurationsMs,
+          playlistEvidence.segmentDurationsMs,
+          playlistEvidence.segmentEndPositions,
         ),
       catch: (error) =>
         error instanceof MediaValidationError

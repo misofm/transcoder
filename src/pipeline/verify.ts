@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { createReadStream } from "node:fs";
-import { lstat, readFile, readdir } from "node:fs/promises";
+import { constants } from "node:fs";
+import { lstat, open, readdir } from "node:fs/promises";
 import { join } from "node:path";
 
 import { Effect } from "effect";
@@ -22,21 +22,42 @@ const MAX_PLAYLIST_BYTES = 1_048_576;
 const MAX_ARTIFACT_FILE_BYTES = 256 * 1024 * 1024;
 
 const readBounded = async (path: string, maximum: number): Promise<Buffer> => {
-  const metadata = await lstat(path);
-  if (
-    !metadata.isFile() ||
-    metadata.isSymbolicLink() ||
-    metadata.size < 1 ||
-    metadata.size > maximum
-  )
-    throw failure(path, "Artifact file is outside its byte limit");
-  return readFile(path);
+  const handle = await open(
+    path,
+    constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0),
+  );
+  try {
+    const metadata = await handle.stat();
+    if (!metadata.isFile() || metadata.size < 1 || metadata.size > maximum)
+      throw failure(path, "Artifact file is outside its byte limit");
+    return await handle.readFile();
+  } finally {
+    await handle.close();
+  }
 };
 
-const hashFile = async (path: string): Promise<string> => {
-  const hash = createHash("sha256");
-  for await (const chunk of createReadStream(path)) hash.update(chunk);
-  return hash.digest("hex");
+const inspectAndHash = async (
+  path: string,
+): Promise<{ readonly bytes: number; readonly sha256: string }> => {
+  const handle = await open(
+    path,
+    constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0),
+  );
+  try {
+    const metadata = await handle.stat();
+    if (
+      !metadata.isFile() ||
+      metadata.size < 1 ||
+      metadata.size > MAX_ARTIFACT_FILE_BYTES
+    )
+      throw failure(path, "Patch must be a bounded regular file");
+    const hash = createHash("sha256");
+    for await (const chunk of handle.createReadStream({ autoClose: false }))
+      hash.update(chunk);
+    return { bytes: metadata.size, sha256: hash.digest("hex") };
+  } finally {
+    await handle.close();
+  }
 };
 
 const failure = (subject: string, message: string) =>
@@ -94,17 +115,13 @@ const verifyUnsafe = async (
   const verifiedPatches: QuiltPatch[] = [];
   for (const identifier of identifiers) {
     const path = join(artifact.rootPath, identifier);
-    const metadata = await lstat(path);
-    if (!metadata.isFile() || metadata.isSymbolicLink())
-      throw failure(identifier, "Patch must be a regular non-symlink file");
+    const inspected = await inspectAndHash(path);
     const patch = declared.get(identifier);
     if (
       patch === undefined ||
       patch.path !== path ||
-      metadata.size < 1 ||
-      metadata.size > MAX_ARTIFACT_FILE_BYTES ||
-      patch.bytes !== metadata.size ||
-      patch.sha256 !== (await hashFile(path))
+      patch.bytes !== inspected.bytes ||
+      patch.sha256 !== inspected.sha256
     ) {
       throw failure(
         identifier,

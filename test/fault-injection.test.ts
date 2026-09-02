@@ -6,6 +6,11 @@ import { Effect, Fiber } from "effect";
 
 import { finalizeTranscode } from "../src/pipeline/finalize.js";
 import type { PreparedTranscode } from "../src/model.js";
+import {
+  acquireWorkspaceLockPromise,
+  releaseWorkspaceLockPromise,
+  withWorkspaceLock,
+} from "../src/workspace/lock.js";
 
 const roots: string[] = [];
 afterEach(async () =>
@@ -103,18 +108,20 @@ test("interrupted encryption joins cleanup before scope completion", async () =>
   };
   const rootKey = new Uint8Array(32).fill(9);
   const fiber = Effect.runFork(
-    finalizeTranscode(
-      {
-        prepared,
-        recordingId: `0x${"02".repeat(32)}`,
-        network: "testnet",
-        encryptionConcurrency: 1,
-      },
-      {
-        generationNonce: new Uint8Array(32).fill(10),
-        rootKey,
-        keySeal: new Uint8Array([1]),
-      },
+    withWorkspaceLock(workspace, "finalize", () =>
+      finalizeTranscode(
+        {
+          prepared,
+          recordingId: `0x${"02".repeat(32)}`,
+          network: "testnet",
+          encryptionConcurrency: 1,
+        },
+        {
+          generationNonce: new Uint8Array(32).fill(10),
+          rootKey,
+          keySeal: new Uint8Array([1]),
+        },
+      ),
     ),
   );
   await new Promise((resolve) => setTimeout(resolve, 5));
@@ -127,4 +134,6 @@ test("interrupted encryption joins cleanup before scope completion", async () =>
         !/^[0-9a-f]{64}$/u.test(identifier) && !identifier.startsWith(".tmp-"),
     ),
   ).toBe(true);
+  const resumedLock = await acquireWorkspaceLockPromise(workspace, "resume");
+  await releaseWorkspaceLockPromise(resumedLock);
 });

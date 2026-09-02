@@ -5,7 +5,6 @@ import {
   randomBytes,
 } from "node:crypto";
 import { constants } from "node:fs";
-import { createReadStream } from "node:fs";
 import {
   chmod,
   mkdir,
@@ -14,7 +13,6 @@ import {
   readdir,
   rename,
   rmdir,
-  stat,
   unlink,
 } from "node:fs/promises";
 import { basename, join } from "node:path";
@@ -49,6 +47,8 @@ import {
 import { patchCountForSegments } from "../profile.js";
 import { parseQuiltIndex } from "../schema.js";
 import { assertNoSymlinkComponentsPromise } from "../workspace/atomic-file.js";
+import { atomicWriteFilePromise } from "../workspace/atomic-file.js";
+import { promoteWorkspaceDirectory } from "../workspace/state.js";
 import { verifyArtifact } from "./verify.js";
 
 const MAX_SEGMENT_BYTES = 256 * 1024 * 1024;
@@ -77,30 +77,7 @@ const cryptoError = (subject: string, message: string) =>
   });
 
 const writeAtomic = async (path: string, bytes: Uint8Array): Promise<void> => {
-  const temporary = `${path}.tmp-${process.pid}-${randomBytes(8).toString("hex")}`;
-  try {
-    const handle = await open(
-      temporary,
-      constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY,
-      0o600,
-    );
-    try {
-      await handle.writeFile(bytes);
-      await handle.sync();
-    } finally {
-      await handle.close();
-    }
-    await rename(temporary, path);
-    const parent = await open(join(path, ".."), constants.O_RDONLY);
-    try {
-      await parent.sync();
-    } finally {
-      await parent.close();
-    }
-  } catch (error) {
-    await unlink(temporary).catch(() => undefined);
-    throw error;
-  }
+  await atomicWriteFilePromise(path, bytes);
 };
 
 const removeEmptyTree = async (path: string): Promise<void> => {
@@ -135,16 +112,42 @@ const readBounded = async (
   path: string,
   ceiling: number,
 ): Promise<Uint8Array> => {
-  const metadata = await stat(path);
-  if (!metadata.isFile() || metadata.size < 1 || metadata.size > ceiling)
-    throw new RangeError("file outside bounds");
-  return readFile(path);
+  const handle = await open(
+    path,
+    constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0),
+  );
+  try {
+    const metadata = await handle.stat();
+    if (!metadata.isFile() || metadata.size < 1 || metadata.size > ceiling)
+      throw new RangeError("file outside bounds");
+    return await handle.readFile();
+  } finally {
+    await handle.close();
+  }
 };
 
-const hashFile = async (path: string): Promise<string> => {
-  const hash = createHash("sha256");
-  for await (const chunk of createReadStream(path)) hash.update(chunk);
-  return hash.digest("hex");
+const inspectAndHash = async (
+  path: string,
+): Promise<{ readonly bytes: number; readonly sha256: string }> => {
+  const handle = await open(
+    path,
+    constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0),
+  );
+  try {
+    const metadata = await handle.stat();
+    if (
+      !metadata.isFile() ||
+      metadata.size < 1 ||
+      metadata.size > MAX_SEGMENT_BYTES
+    )
+      throw new RangeError("patch outside bounds");
+    const hash = createHash("sha256");
+    for await (const chunk of handle.createReadStream({ autoClose: false }))
+      hash.update(chunk);
+    return { bytes: metadata.size, sha256: hash.digest("hex") };
+  } finally {
+    await handle.close();
+  }
 };
 
 const encryptFileAtomic = async (
@@ -159,7 +162,11 @@ const encryptFileAtomic = async (
   readonly ciphertextSha256: string;
 }> => {
   throwIfAborted(signal);
-  const metadata = await stat(plaintextPath);
+  const input = await open(
+    plaintextPath,
+    constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0),
+  );
+  const metadata = await input.stat();
   if (
     !metadata.isFile() ||
     metadata.size < 1 ||
@@ -167,7 +174,6 @@ const encryptFileAtomic = async (
   )
     throw new RangeError("segment size outside supported bounds");
   const temporary = `${destinationPath}.tmp-${process.pid}-${randomBytes(8).toString("hex")}`;
-  const input = await open(plaintextPath, constants.O_RDONLY);
   let output: Awaited<ReturnType<typeof open>> | undefined;
   const hash = createHash("sha256");
   let cipherBytes = 0;
@@ -211,8 +217,18 @@ const encryptFileAtomic = async (
     if (cipherBytes !== encryptedSize(metadata.size))
       throw new Error("CBC size invariant failed");
     const encryptedInput = await open(temporary, constants.O_RDONLY);
-    const plainInput = await open(plaintextPath, constants.O_RDONLY);
+    const plainInput = await open(
+      plaintextPath,
+      constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0),
+    );
     try {
+      const comparisonMetadata = await plainInput.stat();
+      if (
+        comparisonMetadata.dev !== metadata.dev ||
+        comparisonMetadata.ino !== metadata.ino ||
+        comparisonMetadata.size !== metadata.size
+      )
+        throw new Error("plaintext changed during encryption");
       const decipher = createDecipheriv(
         "aes-128-cbc",
         key,
@@ -311,18 +327,12 @@ const loadExistingArtifact = async (
     const patches: QuiltPatch[] = [];
     for (const identifier of identifiers) {
       const path = join(rootPath, identifier);
-      const metadata = await stat(path);
-      if (
-        !metadata.isFile() ||
-        metadata.size < 1 ||
-        metadata.size > MAX_SEGMENT_BYTES
-      )
-        throw artifactError(identifier, "Existing patch is outside bounds");
+      const inspected = await inspectAndHash(path);
       patches.push({
         identifier,
         path,
-        bytes: metadata.size,
-        sha256: await hashFile(path),
+        bytes: inspected.bytes,
+        sha256: inspected.sha256,
       });
     }
     const artifact: QuiltArtifact = {
@@ -607,13 +617,7 @@ const finalizeUnsafe = async (
         });
       }
       throwIfAborted(signal);
-      await rename(temporary, target);
-      const generationsHandle = await open(generations, constants.O_RDONLY);
-      try {
-        await generationsHandle.sync();
-      } finally {
-        await generationsHandle.close();
-      }
+      await Effect.runPromise(promoteWorkspaceDirectory(temporary, target));
       await writeAtomic(
         join(generations, `${digest}.json`),
         generationCheckpointBytes(digest, request, material, patches),
