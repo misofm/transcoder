@@ -25,7 +25,7 @@ import {
   WorkspaceIoError,
 } from "../errors.js";
 import { encryptedSize, implicitIv } from "../crypto/aes-cbc.js";
-import { deriveRenditionKey } from "../crypto/hkdf.js";
+import { deriveRenditionKey, deriveRootKeyId } from "../crypto/hkdf.js";
 import { calculateBandwidth } from "../hls/bandwidth.js";
 import { renderMasterPlaylist } from "../hls/master.js";
 import { parsePlaintextMediaPlaylist } from "../hls/playlist.js";
@@ -51,7 +51,6 @@ import { promoteWorkspaceDirectory } from "../workspace/state.js";
 import { verifyArtifact } from "./verify.js";
 
 const MAX_SEGMENT_BYTES = 256 * 1024 * 1024;
-const MAX_KEY_SEAL_BYTES = 1024 * 1024;
 const MAX_ENCRYPTION_CONCURRENCY = 16;
 
 const throwIfAborted = (signal: AbortSignal): void => {
@@ -99,11 +98,18 @@ const generationDigest = (
 ): string => {
   const hash = createHash("sha256");
   hash.update("miso.transcoder.generation/1\0");
-  hash.update(request.prepared.prepareDigest, "utf8");
+  hash.update(request.prepared.resultDigest, "utf8");
   hash.update(request.recordingId, "utf8");
   hash.update(request.network, "utf8");
   hash.update(material.generationNonce);
-  hash.update(createHash("sha256").update(material.keySeal).digest());
+  hash.update(
+    deriveRootKeyId(
+      material.rootKey,
+      request.recordingId,
+      material.generationNonce,
+    ),
+    "utf8",
+  );
   return hash.digest("hex");
 };
 
@@ -354,7 +360,12 @@ const loadExistingArtifact = async (
         Buffer.from(material.generationNonce).toString("base64url") ||
       index.recordingId !== request.recordingId ||
       index.network !== request.network ||
-      index.key.sha256 !== sha256Hex(material.keySeal)
+      index.encryption.keyId !==
+        deriveRootKeyId(
+          material.rootKey,
+          request.recordingId,
+          material.generationNonce,
+        )
     ) {
       throw artifactError(
         rootPath,
@@ -364,7 +375,6 @@ const loadExistingArtifact = async (
     const identifiers = [
       "index.json",
       "master.m3u8",
-      "key.seal",
       ...index.renditions.flatMap((rendition) => [
         rendition.playlist,
         rendition.init.identifier,
@@ -435,10 +445,15 @@ const generationCheckpointBytes = (
         schema: "miso.transcoder-generation/1",
         generationDigest: digest,
         prepareDigest: request.prepared.prepareDigest,
+        resultDigest: request.prepared.resultDigest,
         generationNonce: Buffer.from(material.generationNonce).toString(
           "base64url",
         ),
-        keySealSha256: sha256Hex(material.keySeal),
+        keyId: deriveRootKeyId(
+          material.rootKey,
+          request.recordingId,
+          material.generationNonce,
+        ),
         toolchainSha256: request.prepared.toolchain.sha256,
         patches: patches.map(({ identifier, bytes, sha256 }) => ({
           identifier,
@@ -465,15 +480,6 @@ const finalizeUnsafe = async (
     throw cryptoError(
       "generationMaterial",
       "Root key and generation nonce must each contain exactly 32 bytes",
-    );
-  }
-  if (
-    material.keySeal.byteLength < 1 ||
-    material.keySeal.byteLength > MAX_KEY_SEAL_BYTES
-  ) {
-    throw artifactError(
-      "key.seal",
-      "Opaque key envelope size is outside supported bounds",
     );
   }
   const ownedRootKey = Uint8Array.from(material.rootKey);
@@ -535,7 +541,6 @@ const finalizeUnsafe = async (
     await mkdir(temporary, { mode: 0o700 });
     const renditionDescriptors: RenditionDescriptor[] = [];
     try {
-      await writeAtomic(join(temporary, "key.seal"), material.keySeal);
       for (const rendition of RENDITIONS) {
         const playlistName = `${rendition.id}.m3u8`;
         const playlistBytes = await readBounded(
@@ -587,8 +592,12 @@ const finalizeUnsafe = async (
             MAX_SEGMENT_BYTES,
           );
           await writeAtomic(join(temporary, playlist.mapIdentifier), initBytes);
-          const rewritten = rewriteMediaPlaylist(playlistBytes, rendition.id);
-          validateEncryptedMediaPlaylist(rewritten, rendition.id);
+          const rewritten = rewriteMediaPlaylist(
+            playlistBytes,
+            nonce,
+            rendition.id,
+          );
+          validateEncryptedMediaPlaylist(rewritten, nonce, rendition.id);
           await writeAtomic(join(temporary, playlistName), rewritten);
           const bandwidth = calculateBandwidth(records);
           renditionDescriptors.push({
@@ -622,17 +631,17 @@ const finalizeUnsafe = async (
         recordingId: request.recordingId,
         generation: Buffer.from(material.generationNonce).toString("base64url"),
         masterPlaylist: "master.m3u8",
-        key: {
-          identifier: "key.seal",
-          bytes: material.keySeal.byteLength,
-          sha256: sha256Hex(material.keySeal),
-        },
         segmentTargetMs: request.prepared.segmentTargetMs,
         patchCount,
         encryption: {
           scheme: "hls-aes-128-cbc-hkdf/1",
           kdf: "hkdf-sha256",
-          sealPlaintextBytes: 32,
+          rootKeyBytes: 32,
+          keyId: deriveRootKeyId(
+            ownedRootKey,
+            request.recordingId,
+            material.generationNonce,
+          ),
         },
         renditions: renditionDescriptors,
       };
@@ -643,7 +652,6 @@ const finalizeUnsafe = async (
       const expected = [
         "index.json",
         "master.m3u8",
-        "key.seal",
         ...renditionDescriptors.flatMap((rendition) => [
           rendition.playlist,
           rendition.init.identifier,
@@ -696,22 +704,6 @@ export const finalizeTranscode = (
   QuiltArtifact,
   CryptoError | ArtifactValidationError | WorkspaceIoError
 > => {
-  const configured = request.prepared.segmentTargetMs;
-  const concurrency = request.encryptionConcurrency ?? 4;
-  if (
-    !Number.isSafeInteger(concurrency) ||
-    concurrency < 1 ||
-    concurrency > MAX_ENCRYPTION_CONCURRENCY ||
-    configured < 6_000
-  ) {
-    material.rootKey.fill(0);
-    return Effect.fail(
-      artifactError(
-        "encryptionConcurrency",
-        "Encryption concurrency is outside the supported range",
-      ),
-    );
-  }
   const mapFailure = (
     error: unknown,
   ): CryptoError | ArtifactValidationError | WorkspaceIoError =>
@@ -741,22 +733,60 @@ export const finalizeTranscode = (
             basename(request.prepared.rootPath),
             "Finalization failed without exposing sensitive details",
           );
-  return Effect.callback<
-    QuiltArtifact,
-    CryptoError | ArtifactValidationError | WorkspaceIoError
-  >((resume, signal) => {
-    const worker = finalizeUnsafe(request, material, concurrency, signal);
-    void worker.then(
-      (artifact) => resume(Effect.succeed(artifact)),
-      (error) => resume(Effect.fail(mapFailure(error))),
-    );
-    // Interruption aborts the worker and waits for its cleanup/commit
-    // reconciliation before the surrounding workspace lock may be released.
-    return Effect.promise(async () => {
-      await worker.then(
-        () => undefined,
-        () => undefined,
+  return Effect.suspend(() => {
+    const configured = request.prepared.segmentTargetMs;
+    const concurrency = request.encryptionConcurrency ?? 4;
+    if (
+      !Number.isSafeInteger(concurrency) ||
+      concurrency < 1 ||
+      concurrency > MAX_ENCRYPTION_CONCURRENCY ||
+      configured < 6_000
+    )
+      return Effect.fail(
+        artifactError(
+          "encryptionConcurrency",
+          "Encryption concurrency is outside the supported range",
+        ),
       );
+    if (
+      material.rootKey.byteLength !== 32 ||
+      material.generationNonce.byteLength !== 32
+    )
+      return Effect.fail(
+        cryptoError(
+          "generationMaterial",
+          "Root key and generation nonce must each contain exactly 32 bytes",
+        ),
+      );
+    return Effect.callback<
+      QuiltArtifact,
+      CryptoError | ArtifactValidationError | WorkspaceIoError
+    >((resume, signal) => {
+      // Snapshot validated inputs before the first asynchronous boundary, then
+      // consume the caller's working key immediately.
+      const ownedMaterial: GenerationMaterial = {
+        generationNonce: Uint8Array.from(material.generationNonce),
+        rootKey: Uint8Array.from(material.rootKey),
+      };
+      material.rootKey.fill(0);
+      const worker = finalizeUnsafe(
+        request,
+        ownedMaterial,
+        concurrency,
+        signal,
+      ).finally(() => ownedMaterial.rootKey.fill(0));
+      void worker.then(
+        (artifact) => resume(Effect.succeed(artifact)),
+        (error) => resume(Effect.fail(mapFailure(error))),
+      );
+      // Interruption aborts the worker and waits for its cleanup/commit
+      // reconciliation before the surrounding workspace lock may be released.
+      return Effect.promise(async () => {
+        await worker.then(
+          () => undefined,
+          () => undefined,
+        );
+      });
     });
   }).pipe(Effect.ensuring(Effect.sync(() => material.rootKey.fill(0))));
 };

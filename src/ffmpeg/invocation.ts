@@ -25,17 +25,25 @@ export interface LadderInvocationOptions {
   readonly outputDirectory: string;
   readonly source: Pick<SourceProbe, "sampleRateHz" | "channels">;
   readonly segmentTargetMs: number;
+  readonly gainCentiDb?: number;
 }
 
 export const normalizedAudioFilter = (
   sampleRateHz: 44_100 | 48_000,
   channels: 1 | 2,
+  gainCentiDb = 0,
 ): string => {
   const channelFilter =
     channels === 1
       ? "pan=stereo|c0=c0|c1=c0"
       : "aformat=channel_layouts=stereo";
-  return `[0:a:0]${channelFilter},aresample=${sampleRateHz}:async=0:first_pts=0,asetpts=N/SR/TB,asplit=3[aac096][aac160][aac256]`;
+  if (!Number.isSafeInteger(gainCentiDb) || gainCentiDb > 0)
+    throw new TypeError("gain must be a non-positive integer centi-dB value");
+  const gain =
+    gainCentiDb === 0
+      ? ""
+      : `,volume=${(gainCentiDb / 100).toFixed(2)}dB:precision=double`;
+  return `[0:a:0]${channelFilter},aresample=${sampleRateHz}:async=0:first_pts=0,asetpts=N/SR/TB${gain},asplit=3[aac096][aac160][aac256]`;
 };
 
 export const buildLadderInvocation = (
@@ -82,7 +90,11 @@ export const buildLadderInvocation = (
     "-sn",
     "-dn",
     "-filter_complex",
-    normalizedAudioFilter(options.source.sampleRateHz, options.source.channels),
+    normalizedAudioFilter(
+      options.source.sampleRateHz,
+      options.source.channels,
+      options.gainCentiDb,
+    ),
     "-map",
     "[aac096]",
     "-map",

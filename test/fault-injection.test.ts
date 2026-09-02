@@ -27,6 +27,30 @@ import {
 
 const roots: string[] = [];
 const temporaryRoot = realpath(tmpdir());
+const preparedAudio = {
+  resultDigest: "9".repeat(64),
+  audio: {
+    policyId: "miso.aac-codec-preview/1" as const,
+    appliedGainCentiDb: 0,
+    source: {
+      integratedLoudnessCentiLufs: -2400,
+      truePeakCentiDbtp: -200,
+      samplePeakCentiDbfs: -200,
+    },
+    preview: ["aac-096", "aac-160", "aac-256"].map((id) => ({
+      id: id as "aac-096" | "aac-160" | "aac-256",
+      integratedLoudnessCentiLufs: -2400,
+      truePeakCentiDbtp: -200,
+      samplePeakCentiDbfs: -200,
+    })),
+    output: ["aac-096", "aac-160", "aac-256"].map((id) => ({
+      id: id as "aac-096" | "aac-160" | "aac-256",
+      integratedLoudnessCentiLufs: -2400,
+      truePeakCentiDbtp: -200,
+      samplePeakCentiDbfs: -200,
+    })),
+  },
+};
 afterEach(async () =>
   Promise.all(
     roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
@@ -41,6 +65,7 @@ test("failed finalization zeroes the owned key and cannot promote partial output
   const rootPath = join(workspace, "plaintext", "a".repeat(64));
   await mkdir(rootPath, { recursive: true, mode: 0o700 });
   const prepared: PreparedTranscode = {
+    ...preparedAudio,
     prepareDigest: "a".repeat(64),
     rootPath,
     sourceSha256: "b".repeat(64),
@@ -62,18 +87,15 @@ test("failed finalization zeroes the owned key and cannot promote partial output
     },
   };
   const rootKey = new Uint8Array(32).fill(7);
-  await expect(
-    Effect.runPromise(
-      finalizeTranscode(
-        { prepared, recordingId: `0x${"01".repeat(32)}`, network: "testnet" },
-        {
-          generationNonce: new Uint8Array(32).fill(8),
-          rootKey,
-          keySeal: new Uint8Array([1]),
-        },
-      ),
-    ),
-  ).rejects.toBeDefined();
+  const finalization = finalizeTranscode(
+    { prepared, recordingId: `0x${"01".repeat(32)}`, network: "testnet" },
+    {
+      generationNonce: new Uint8Array(32).fill(8),
+      rootKey,
+    },
+  );
+  expect(rootKey).toEqual(new Uint8Array(32).fill(7));
+  await expect(Effect.runPromise(finalization)).rejects.toBeDefined();
   expect(rootKey).toEqual(new Uint8Array(32));
   const generations = join(workspace, "generations");
   expect(
@@ -143,6 +165,7 @@ test("interrupted encryption joins cleanup before scope completion", async () =>
     );
   }
   const prepared: PreparedTranscode = {
+    ...preparedAudio,
     prepareDigest: digest,
     rootPath,
     sourceSha256: "e".repeat(64),
@@ -176,7 +199,6 @@ test("interrupted encryption joins cleanup before scope completion", async () =>
         {
           generationNonce: new Uint8Array(32).fill(10),
           rootKey,
-          keySeal: new Uint8Array([1]),
         },
       ),
     ),

@@ -1,11 +1,12 @@
 import type { RenditionId } from "../model.js";
 import { parsePlaintextMediaPlaylist } from "./playlist.js";
 
-export const keyTag = (renditionId: RenditionId): string =>
-  `#EXT-X-KEY:METHOD=AES-128,URI="key.seal?rendition=${renditionId}"`;
+export const keyTag = (generation: string, renditionId: RenditionId): string =>
+  `#EXT-X-KEY:METHOD=AES-128,URI="key.external?generation=${generation}&rendition=${renditionId}"`;
 
 export const rewriteMediaPlaylist = (
   bytes: Uint8Array,
+  generation: string,
   renditionId: RenditionId,
 ): Uint8Array => {
   const playlist = parsePlaintextMediaPlaylist(bytes);
@@ -14,7 +15,7 @@ export const rewriteMediaPlaylist = (
   for (const line of playlist.lines) {
     output.push(line);
     if (line.startsWith("#EXT-X-MAP:")) {
-      output.push(keyTag(renditionId));
+      output.push(keyTag(generation, renditionId));
       inserted = true;
     }
   }
@@ -24,6 +25,7 @@ export const rewriteMediaPlaylist = (
 
 export const validateEncryptedMediaPlaylist = (
   bytes: Uint8Array,
+  generation: string,
   renditionId: RenditionId,
 ): void => {
   if (bytes.byteLength === 0 || bytes.byteLength > 1_048_576)
@@ -41,7 +43,7 @@ export const validateEncryptedMediaPlaylist = (
       "playlist requires exactly one key immediately after its map",
     );
   }
-  if (lines[keys[0]!] !== keyTag(renditionId))
+  if (lines[keys[0]!] !== keyTag(generation, renditionId))
     throw new TypeError("unexpected key method, URI, or IV");
   if (!lines.includes("#EXT-X-MEDIA-SEQUENCE:0"))
     throw new TypeError("media sequence must be zero");
@@ -49,9 +51,10 @@ export const validateEncryptedMediaPlaylist = (
 
 export const recoverPlaintextPlaylist = (
   bytes: Uint8Array,
+  generation: string,
   renditionId: RenditionId,
 ): Uint8Array => {
-  validateEncryptedMediaPlaylist(bytes, renditionId);
+  validateEncryptedMediaPlaylist(bytes, generation, renditionId);
   const source = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
   const lines = source
     .trimEnd()

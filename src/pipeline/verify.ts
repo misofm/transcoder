@@ -169,6 +169,7 @@ const verifyUnsafe = async (
           join(artifact.rootPath, rendition.playlist),
           MAX_PLAYLIST_BYTES,
         ),
+        index.generation,
         rendition.id,
       ),
     );
@@ -195,13 +196,6 @@ const verifyUnsafe = async (
         throw failure(segment.identifier, "Ciphertext descriptor mismatch");
       }
     }
-  }
-  const keyPatch = declared.get(index.key.identifier);
-  if (
-    keyPatch?.bytes !== index.key.bytes ||
-    keyPatch.sha256 !== index.key.sha256
-  ) {
-    throw failure(index.key.identifier, "Key envelope descriptor mismatch");
   }
   return { ...artifact, patches: verifiedPatches, verified: true };
 };

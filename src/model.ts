@@ -11,7 +11,6 @@ export type Network = "testnet" | "mainnet";
 export interface GenerationMaterial {
   readonly generationNonce: Uint8Array;
   readonly rootKey: Uint8Array;
-  readonly keySeal: Uint8Array;
 }
 
 export interface TranscodeProfile {
@@ -51,14 +50,37 @@ export interface ToolchainFingerprint {
   readonly sha256: string;
 }
 
+export interface AudioMeasurement {
+  /** Null denotes the meter's canonical negative-infinity result for silence. */
+  readonly integratedLoudnessCentiLufs: number | null;
+  /** Null denotes the meter's canonical negative-infinity result for silence. */
+  readonly truePeakCentiDbtp: number | null;
+  /** Null denotes an all-zero decoded stream. */
+  readonly samplePeakCentiDbfs: number | null;
+}
+
+export interface RenditionAudioMeasurement extends AudioMeasurement {
+  readonly id: RenditionId;
+}
+
+export interface PreparedAudioEvidence {
+  readonly policyId: "miso.aac-codec-preview/1";
+  readonly appliedGainCentiDb: number;
+  readonly source: AudioMeasurement;
+  readonly preview: readonly RenditionAudioMeasurement[];
+  readonly output: readonly RenditionAudioMeasurement[];
+}
+
 export interface PreparedTranscode {
   readonly prepareDigest: string;
+  readonly resultDigest: string;
   readonly rootPath: string;
   readonly sourceSha256: string;
   readonly durationMs: number;
   readonly sampleRateHz: 44100 | 48000;
   readonly segmentTargetMs: number;
   readonly toolchain: ToolchainFingerprint;
+  readonly audio: PreparedAudioEvidence;
 }
 
 export interface FileDescriptor {
@@ -95,13 +117,13 @@ export interface QuiltIndex {
   readonly recordingId: string;
   readonly generation: string;
   readonly masterPlaylist: "master.m3u8";
-  readonly key: FileDescriptor;
   readonly segmentTargetMs: number;
   readonly patchCount: number;
   readonly encryption: {
     readonly scheme: "hls-aes-128-cbc-hkdf/1";
     readonly kdf: "hkdf-sha256";
-    readonly sealPlaintextBytes: 32;
+    readonly rootKeyBytes: 32;
+    readonly keyId: string;
   };
   readonly renditions: readonly RenditionDescriptor[];
 }

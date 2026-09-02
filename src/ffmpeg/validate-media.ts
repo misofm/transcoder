@@ -204,7 +204,7 @@ export const parseTimeline = (
 
 export const validatePlaintextRendition = (
   process: NativeProcessService,
-  ffmpegPath: string,
+  _ffmpegPath: string,
   ffprobePath: string,
   playlistPath: string,
   sampleRateHz: 44_100 | 48_000,
@@ -262,75 +262,5 @@ export const validatePlaintextRendition = (
           ? error
           : invalid(playlistPath, "Packet validation failed"),
     });
-    yield* process.run({
-      role: "ffmpeg-decode",
-      executable: ffmpegPath,
-      args: [
-        "-hide_banner",
-        "-nostdin",
-        "-v",
-        "error",
-        "-xerror",
-        "-i",
-        playlistPath,
-        "-map",
-        "0:a:0",
-        "-f",
-        "null",
-        "-",
-      ],
-      retainStdout: false,
-    });
-
-    let carry = Buffer.alloc(0);
-    let invalidSample = false;
-    let decodedBytes = 0;
-    const byteCeiling = Math.ceil(
-      (durationMs / 1_000 + 2) * sampleRateHz * 2 * 4,
-    );
-    yield* process.run({
-      role: "ffmpeg-clipping-scan",
-      executable: ffmpegPath,
-      args: [
-        "-hide_banner",
-        "-nostdin",
-        "-v",
-        "error",
-        "-xerror",
-        "-i",
-        playlistPath,
-        "-map",
-        "0:a:0",
-        "-f",
-        "f32le",
-        "-acodec",
-        "pcm_f32le",
-        "-",
-      ],
-      retainStdout: false,
-      onStdoutChunk: (chunk) => {
-        decodedBytes += chunk.byteLength;
-        if (decodedBytes > byteCeiling)
-          throw new RangeError("decoded PCM exceeded bounded ceiling");
-        const value =
-          carry.byteLength === 0
-            ? Buffer.from(chunk)
-            : Buffer.concat([carry, chunk]);
-        const complete = value.byteLength - (value.byteLength % 4);
-        for (let offset = 0; offset < complete; offset += 4) {
-          const sample = value.readFloatLE(offset);
-          if (!Number.isFinite(sample) || Math.abs(sample) > 1)
-            invalidSample = true;
-        }
-        carry = Buffer.from(value.subarray(complete));
-      },
-    });
-    if (carry.byteLength !== 0 || invalidSample)
-      return yield* Effect.fail(
-        invalid(
-          playlistPath,
-          "Decoded audio contains clipping or non-finite samples",
-        ),
-      );
     return timeline;
   });

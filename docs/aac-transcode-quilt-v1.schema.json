@@ -10,7 +10,6 @@
     "recordingId",
     "generation",
     "masterPlaylist",
-    "key",
     "segmentTargetMs",
     "patchCount",
     "encryption",
@@ -26,17 +25,6 @@
       "pattern": "^[A-Za-z0-9_-]{43}$"
     },
     "masterPlaylist": { "const": "master.m3u8" },
-    "key": {
-      "allOf": [
-        { "$ref": "#/$defs/file" },
-        {
-          "type": "object",
-          "properties": {
-            "identifier": { "const": "key.seal" }
-          }
-        }
-      ]
-    },
     "segmentTargetMs": {
       "type": "integer",
       "minimum": 1000,
@@ -44,23 +32,24 @@
     },
     "patchCount": {
       "type": "integer",
-      "minimum": 6,
+      "minimum": 11,
       "maximum": 666
     },
     "encryption": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["scheme", "kdf", "sealPlaintextBytes"],
+      "required": ["scheme", "kdf", "rootKeyBytes", "keyId"],
       "properties": {
         "scheme": { "const": "hls-aes-128-cbc-hkdf/1" },
         "kdf": { "const": "hkdf-sha256" },
-        "sealPlaintextBytes": { "const": 32 }
+        "rootKeyBytes": { "const": 32 },
+        "keyId": { "$ref": "#/$defs/sha256" }
       }
     },
     "renditions": {
       "type": "array",
-      "minItems": 1,
-      "maxItems": 4,
+      "minItems": 3,
+      "maxItems": 3,
       "items": { "$ref": "#/$defs/rendition" }
     }
   },

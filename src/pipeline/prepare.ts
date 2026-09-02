@@ -20,6 +20,15 @@ import {
 } from "../errors.js";
 import { Ffmpeg } from "../ffmpeg/service.js";
 import { buildLadderInvocation } from "../ffmpeg/invocation.js";
+import {
+  AUDIO_POLICY_ID,
+  FINAL_TRUE_PEAK_CENTI_DBTP,
+  GAIN_QUANTUM_CENTI_DB,
+  LOUDNORM_RECIPE,
+  PLANNING_TRUE_PEAK_CENTI_DBTP,
+  planSharedGainCentiDb,
+  type DecodedAudioMeasurement,
+} from "../ffmpeg/audio-meter.js";
 import type { TimelineValidation } from "../ffmpeg/validate-media.js";
 import {
   parsePlaintextMediaPlaylist,
@@ -28,6 +37,7 @@ import {
 import { assertMasterPlaylistParses } from "../hls/master.js";
 import {
   RENDITIONS,
+  type PreparedAudioEvidence,
   type PrepareRequest,
   type PreparedTranscode,
 } from "../model.js";
@@ -69,6 +79,18 @@ interface PreparedCheckpoint extends PreparedTranscode {
     readonly sha256: string;
   }[];
 }
+
+type PreparedCheckpointBase = Pick<
+  PreparedCheckpoint,
+  | "prepareDigest"
+  | "rootPath"
+  | "sourceSha256"
+  | "durationMs"
+  | "sampleRateHz"
+  | "segmentTargetMs"
+  | "toolchain"
+  | "argvSpecification"
+>;
 
 const invalid = (subject: string, message: string) =>
   new InvalidRequestError({
@@ -208,7 +230,7 @@ const collectPlaintextFiles = async (
 
 const parsePreparedCheckpoint = (
   value: unknown,
-  expected: Omit<PreparedCheckpoint, "schema" | "files">,
+  expected: PreparedCheckpointBase,
 ): PreparedCheckpoint => {
   if (typeof value !== "object" || value === null || Array.isArray(value))
     throw new TypeError();
@@ -217,6 +239,7 @@ const parsePreparedCheckpoint = (
   const expectedKeys = [
     "schema",
     "prepareDigest",
+    "resultDigest",
     "rootPath",
     "sourceSha256",
     "durationMs",
@@ -224,6 +247,7 @@ const parsePreparedCheckpoint = (
     "segmentTargetMs",
     "toolchain",
     "argvSpecification",
+    "audio",
     "files",
   ].sort();
   if (
@@ -239,7 +263,8 @@ const parsePreparedCheckpoint = (
       JSON.stringify(expected.toolchain) ||
     JSON.stringify(record["argvSpecification"]) !==
       JSON.stringify(expected.argvSpecification) ||
-    !Array.isArray(record["files"])
+    !Array.isArray(record["files"]) ||
+    !isPreparedAudioEvidence(record["audio"])
   )
     throw new TypeError();
   for (const file of record["files"]) {
@@ -255,7 +280,95 @@ const parsePreparedCheckpoint = (
     )
       throw new TypeError();
   }
+  if (
+    record["resultDigest"] !==
+    canonicalResultDigest(
+      expected.prepareDigest,
+      record["audio"] as PreparedAudioEvidence,
+      record["files"] as PreparedCheckpoint["files"],
+    )
+  )
+    throw new TypeError();
   return value as PreparedCheckpoint;
+};
+
+const measurementKeys = [
+  "integratedLoudnessCentiLufs",
+  "truePeakCentiDbtp",
+  "samplePeakCentiDbfs",
+] as const;
+
+const isCentiOrNull = (value: unknown): boolean =>
+  value === null ||
+  (Number.isSafeInteger(value) &&
+    (value as number) >= -99_900 &&
+    (value as number) <= 99_900);
+
+const isMeasurement = (value: unknown, rendition = false): boolean => {
+  if (typeof value !== "object" || value === null || Array.isArray(value))
+    return false;
+  const record = value as Record<string, unknown>;
+  const keys = [...measurementKeys, ...(rendition ? ["id"] : [])].sort();
+  return (
+    Object.keys(record).sort().join("\0") === keys.join("\0") &&
+    measurementKeys.every((key) => isCentiOrNull(record[key]))
+  );
+};
+
+const isPreparedAudioEvidence = (
+  value: unknown,
+): value is PreparedAudioEvidence => {
+  if (typeof value !== "object" || value === null || Array.isArray(value))
+    return false;
+  const record = value as Record<string, unknown>;
+  if (
+    Object.keys(record).sort().join("\0") !==
+      ["policyId", "appliedGainCentiDb", "source", "preview", "output"]
+        .sort()
+        .join("\0") ||
+    record["policyId"] !== AUDIO_POLICY_ID ||
+    !Number.isSafeInteger(record["appliedGainCentiDb"]) ||
+    (record["appliedGainCentiDb"] as number) > 0 ||
+    (record["appliedGainCentiDb"] as number) % GAIN_QUANTUM_CENTI_DB !== 0 ||
+    !isMeasurement(record["source"]) ||
+    !Array.isArray(record["preview"]) ||
+    !Array.isArray(record["output"])
+  )
+    return false;
+  const arraysValid = [record["preview"], record["output"]].every(
+    (items) =>
+      (items as unknown[]).length === RENDITIONS.length &&
+      (items as unknown[]).every(
+        (item, index) =>
+          isMeasurement(item, true) &&
+          (item as Record<string, unknown>)["id"] === RENDITIONS[index]?.id,
+      ),
+  );
+  if (!arraysValid) return false;
+  const output = record["output"] as Array<Record<string, unknown>>;
+  const passesStoredPolicy = (measurement: Record<string, unknown>) =>
+    (measurement["truePeakCentiDbtp"] === null ||
+      (measurement["truePeakCentiDbtp"] as number) <=
+        FINAL_TRUE_PEAK_CENTI_DBTP) &&
+    (measurement["samplePeakCentiDbfs"] === null ||
+      (measurement["samplePeakCentiDbfs"] as number) <= 0);
+  if (!output.every(passesStoredPolicy)) return false;
+  const gain = record["appliedGainCentiDb"] as number;
+  const preview = record["preview"] as Array<Record<string, unknown>>;
+  if (gain === 0)
+    return (
+      preview.every(passesStoredPolicy) &&
+      JSON.stringify(preview) === JSON.stringify(output)
+    );
+  return (
+    preview.some((measurement) => !passesStoredPolicy(measurement)) &&
+    gain ===
+      planSharedGainCentiDb(
+        preview.map(
+          (measurement) => measurement["truePeakCentiDbtp"] as number | null,
+        ),
+      )
+  );
 };
 
 const canonicalPrepareDigest = (value: object): string =>
@@ -263,6 +376,29 @@ const canonicalPrepareDigest = (value: object): string =>
     .update("miso.transcoder.prepare/1\0")
     .update(`${JSON.stringify(value)}\n`)
     .digest("hex");
+
+const canonicalResultDigest = (
+  prepareDigest: string,
+  audio: PreparedAudioEvidence,
+  files: PreparedCheckpoint["files"],
+): string =>
+  createHash("sha256")
+    .update("miso.transcoder.prepare-result/1\0")
+    .update(`${JSON.stringify({ prepareDigest, audio, files })}\n`)
+    .digest("hex");
+
+const publicMeasurement = (measurement: DecodedAudioMeasurement) => ({
+  integratedLoudnessCentiLufs: measurement.integratedLoudnessCentiLufs,
+  truePeakCentiDbtp: measurement.truePeakCentiDbtp,
+  samplePeakCentiDbfs: measurement.samplePeakCentiDbfs,
+});
+
+const passesFinalAudioPolicy = (
+  measurement: DecodedAudioMeasurement,
+): boolean =>
+  (measurement.truePeakCentiDbtp === null ||
+    measurement.truePeakCentiDbtp <= FINAL_TRUE_PEAK_CENTI_DBTP) &&
+  measurement.exactSamplePeak <= 1;
 
 const readWorkspacePrepareDigest = async (
   workspacePath: string,
@@ -473,6 +609,18 @@ export const prepareTranscode = (
           const argvSpecification = specification.args.map((argument) =>
             argument.replaceAll(specificationRoot, "<OUTPUT>"),
           );
+          const retryArgvSpecification = buildLadderInvocation({
+            ffmpegPath: request.ffmpegPath,
+            inputPath: request.inputPath,
+            outputDirectory: specificationRoot,
+            source,
+            segmentTargetMs,
+            gainCentiDb: -10,
+          }).args.map((argument) =>
+            argument
+              .replaceAll(specificationRoot, "<OUTPUT>")
+              .replace("volume=-0.10dB", "volume=<GAIN_DB>dB"),
+          );
           const prepareDigest = canonicalPrepareDigest({
             sourceSha256,
             profile: { segmentTargetMs, renditions: RENDITIONS },
@@ -484,6 +632,15 @@ export const prepareTranscode = (
             },
             toolchain,
             argvSpecification,
+            retryArgvSpecification,
+            audioPolicy: {
+              id: AUDIO_POLICY_ID,
+              meter: LOUDNORM_RECIPE,
+              finalTruePeakCentiDbtp: FINAL_TRUE_PEAK_CENTI_DBTP,
+              planningTruePeakCentiDbtp: PLANNING_TRUE_PEAK_CENTI_DBTP,
+              gainQuantumCentiDb: GAIN_QUANTUM_CENTI_DB,
+              scan: "pcm_f32le-exact-abs-finite/1",
+            },
           });
           const priorDigest = yield* Effect.tryPromise({
             try: () => readWorkspacePrepareDigest(request.workspacePath),
@@ -518,7 +675,7 @@ export const prepareTranscode = (
             segmentTargetMs,
             toolchain,
             argvSpecification,
-          } satisfies Omit<PreparedCheckpoint, "schema" | "files">;
+          } satisfies PreparedCheckpointBase;
           const cached = yield* Effect.tryPromise({
             try: async () => {
               try {
@@ -630,91 +787,207 @@ export const prepareTranscode = (
                   message: "Cached plaintext timeline validation failed",
                 }),
               );
+            const cachedSource = yield* ffmpeg.measureAudio(
+              request.ffmpegPath,
+              request.inputPath,
+              source.sampleRateHz,
+              source.durationMs,
+              source,
+            );
+            if (
+              JSON.stringify(publicMeasurement(cachedSource)) !==
+              JSON.stringify(cached.audio.source)
+            )
+              return yield* Effect.fail(
+                new StaleWorkspaceError({
+                  code: "STALE_WORKSPACE",
+                  phase: "workspace",
+                  subject: target,
+                  message: "Cached source audio evidence no longer matches",
+                }),
+              );
+            const cachedOutput = [];
+            for (const rendition of RENDITIONS) {
+              const measurement = yield* ffmpeg.measureAudio(
+                request.ffmpegPath,
+                join(target, `${rendition.id}.m3u8`),
+                source.sampleRateHz,
+                source.durationMs,
+              );
+              if (!passesFinalAudioPolicy(measurement))
+                return yield* Effect.fail(
+                  new StaleWorkspaceError({
+                    code: "STALE_WORKSPACE",
+                    phase: "workspace",
+                    subject: target,
+                    message: "Cached plaintext failed the audio policy",
+                  }),
+                );
+              cachedOutput.push({
+                id: rendition.id,
+                ...publicMeasurement(measurement),
+              });
+            }
+            if (
+              JSON.stringify(cachedOutput) !==
+              JSON.stringify(cached.audio.output)
+            )
+              return yield* Effect.fail(
+                new StaleWorkspaceError({
+                  code: "STALE_WORKSPACE",
+                  phase: "workspace",
+                  subject: target,
+                  message:
+                    "Cached audio evidence does not match decoded output",
+                }),
+              );
             return cached;
           }
-          const temporary = join(
-            request.workspacePath,
-            `.tmp-${process.pid}-${randomBytes(12).toString("hex")}`,
-          );
-          yield* Effect.tryPromise({
-            try: () => mkdir(temporary, { mode: 0o700 }),
-            catch: () =>
-              invalid("workspace", "Temporary workspace creation failed"),
-          });
+          const temporaryPaths: string[] = [];
+          const makeTemporary = () =>
+            Effect.tryPromise({
+              try: async () => {
+                const path = join(
+                  request.workspacePath,
+                  `.tmp-${process.pid}-${randomBytes(12).toString("hex")}`,
+                );
+                await mkdir(path, { mode: 0o700 });
+                temporaryPaths.push(path);
+                return path;
+              },
+              catch: () =>
+                invalid("workspace", "Temporary workspace creation failed"),
+            });
           const cleanup = Effect.tryPromise({
-            try: () => rm(temporary, { recursive: true, force: true }),
+            try: () =>
+              Promise.all(
+                temporaryPaths.map((path) =>
+                  rm(path, { recursive: true, force: true }),
+                ),
+              ).then(() => undefined),
             catch: () => undefined,
           }).pipe(Effect.orDie);
           const prepared = yield* Effect.gen(function* () {
+            const sourceMeasurement = yield* ffmpeg.measureAudio(
+              request.ffmpegPath,
+              request.inputPath,
+              source.sampleRateHz,
+              source.durationMs,
+              source,
+            );
+            const inspectCandidate = (directory: string) =>
+              Effect.gen(function* () {
+                const playlists = yield* Effect.tryPromise({
+                  try: () =>
+                    validatePlaylistSet(
+                      directory,
+                      segmentTargetMs,
+                      source.sampleRateHz,
+                      false,
+                    ),
+                  catch: (error) =>
+                    error instanceof PlaylistValidationError ||
+                    error instanceof PatchLimitExceededError
+                      ? error
+                      : playlistFailure(
+                          directory,
+                          "Plaintext playlist validation failed",
+                        ),
+                });
+                const timelines: TimelineValidation[] = [];
+                const measurements: DecodedAudioMeasurement[] = [];
+                for (const rendition of RENDITIONS) {
+                  const playlistPath = join(directory, `${rendition.id}.m3u8`);
+                  timelines.push(
+                    yield* ffmpeg.validatePlaintextRendition(
+                      request.ffmpegPath,
+                      request.ffprobePath,
+                      playlistPath,
+                      source.sampleRateHz,
+                      source.durationMs,
+                    ),
+                  );
+                  measurements.push(
+                    yield* ffmpeg.measureAudio(
+                      request.ffmpegPath,
+                      playlistPath,
+                      source.sampleRateHz,
+                      source.durationMs,
+                    ),
+                  );
+                }
+                if (
+                  !timelines
+                    .slice(1)
+                    .every(
+                      (timeline) =>
+                        timeline.totalSamples === timelines[0]?.totalSamples &&
+                        timeline.intervals.join("\0") ===
+                          timelines[0]?.intervals.join("\0") &&
+                        timeline.segmentIntervals.join("\0") ===
+                          timelines[0]?.segmentIntervals.join("\0"),
+                    )
+                )
+                  return yield* Effect.fail(
+                    new MediaValidationError({
+                      code: "MEDIA_VALIDATION",
+                      phase: "validate",
+                      subject: directory,
+                      message:
+                        "Rendition packet timelines or total sample counts differ",
+                    }),
+                  );
+                return { playlists, measurements };
+              });
+
+            const previewDirectory = yield* makeTemporary();
             yield* ffmpeg.encodeLadder({
               ffmpegPath: request.ffmpegPath,
               inputPath: request.inputPath,
-              outputDirectory: temporary,
+              outputDirectory: previewDirectory,
               source,
               segmentTargetMs,
             });
-            const playlists = yield* Effect.tryPromise({
-              try: () =>
-                validatePlaylistSet(
-                  temporary,
-                  segmentTargetMs,
-                  source.sampleRateHz,
-                  false,
-                ),
-              catch: (error) =>
-                error instanceof PlaylistValidationError ||
-                error instanceof PatchLimitExceededError
-                  ? error
-                  : playlistFailure(
-                      temporary,
-                      "Plaintext playlist validation failed",
-                    ),
-            });
-            const timelines: TimelineValidation[] = [];
-            for (const rendition of RENDITIONS) {
-              timelines.push(
-                yield* ffmpeg.validatePlaintextRendition(
-                  request.ffmpegPath,
-                  request.ffprobePath,
-                  join(temporary, `${rendition.id}.m3u8`),
-                  source.sampleRateHz,
-                  source.durationMs,
-                ),
-              );
+            const preview = yield* inspectCandidate(previewDirectory);
+            const unityPasses = preview.measurements.every(
+              passesFinalAudioPolicy,
+            );
+            const appliedGainCentiDb = unityPasses
+              ? 0
+              : planSharedGainCentiDb(
+                  preview.measurements.map(
+                    (measurement) => measurement.truePeakCentiDbtp,
+                  ),
+                );
+            let finalDirectory = previewDirectory;
+            let finalCandidate = preview;
+            if (!unityPasses) {
+              finalDirectory = yield* makeTemporary();
+              yield* ffmpeg.encodeLadder({
+                ffmpegPath: request.ffmpegPath,
+                inputPath: request.inputPath,
+                outputDirectory: finalDirectory,
+                source,
+                segmentTargetMs,
+                gainCentiDb: appliedGainCentiDb,
+              });
+              finalCandidate = yield* inspectCandidate(finalDirectory);
+              if (!finalCandidate.measurements.every(passesFinalAudioPolicy))
+                return yield* Effect.fail(
+                  new MediaValidationError({
+                    code: "MEDIA_VALIDATION",
+                    phase: "validate",
+                    subject: finalDirectory,
+                    message:
+                      "Second-pass AAC ladder exceeds the final true-peak or decoded sample ceiling",
+                  }),
+                );
+              yield* Effect.tryPromise({
+                try: () =>
+                  rm(previewDirectory, { recursive: true, force: true }),
+                catch: () => invalid("workspace", "Preview cleanup failed"),
+              });
             }
-            if (
-              !timelines
-                .slice(1)
-                .every(
-                  (timeline) =>
-                    timeline.totalSamples === timelines[0]?.totalSamples &&
-                    timeline.intervals.join("\0") ===
-                      timelines[0]?.intervals.join("\0") &&
-                    timeline.segmentIntervals.join("\0") ===
-                      timelines[0]?.segmentIntervals.join("\0"),
-                )
-            ) {
-              return yield* Effect.fail(
-                new MediaValidationError({
-                  code: "MEDIA_VALIDATION",
-                  phase: "validate",
-                  subject: temporary,
-                  message:
-                    "Rendition packet timelines or total sample counts differ",
-                }),
-              );
-            }
-            if (
-              !playlists
-                .slice(1)
-                .every(
-                  (playlist) =>
-                    playlist.segments.length === playlists[0]?.segments.length,
-                )
-            )
-              return yield* Effect.fail(
-                playlistFailure(temporary, "Renditions are not aligned"),
-              );
             const finalSource = yield* Effect.tryPromise({
               try: async () => ({
                 metadata: await lstat(request.inputPath),
@@ -732,18 +1005,42 @@ export const prepareTranscode = (
                 invalid("inputPath", "Source changed during encoding"),
               );
             const files = yield* Effect.tryPromise({
-              try: () => collectPlaintextFiles(temporary, playlists, true),
+              try: () =>
+                collectPlaintextFiles(
+                  finalDirectory,
+                  finalCandidate.playlists,
+                  true,
+                ),
               catch: (error) =>
                 error instanceof PlaylistValidationError
                   ? error
                   : playlistFailure(
-                      temporary,
+                      finalDirectory,
                       "Plaintext inventory hashing failed",
                     ),
             });
+            const audio: PreparedAudioEvidence = {
+              policyId: AUDIO_POLICY_ID,
+              appliedGainCentiDb,
+              source: publicMeasurement(sourceMeasurement),
+              preview: preview.measurements.map((measurement, index) => ({
+                id: RENDITIONS[index]!.id,
+                ...publicMeasurement(measurement),
+              })),
+              output: finalCandidate.measurements.map((measurement, index) => ({
+                id: RENDITIONS[index]!.id,
+                ...publicMeasurement(measurement),
+              })),
+            };
+            const resultDigest = canonicalResultDigest(
+              prepareDigest,
+              audio,
+              files,
+            );
             const value: PreparedCheckpoint = {
               schema: "miso.transcoder-prepared/1",
               prepareDigest,
+              resultDigest,
               rootPath: target,
               sourceSha256,
               durationMs: source.durationMs,
@@ -751,13 +1048,14 @@ export const prepareTranscode = (
               segmentTargetMs,
               toolchain,
               argvSpecification,
+              audio,
               files,
             };
             yield* atomicWriteFile(
-              join(temporary, "prepared.json"),
+              join(finalDirectory, "prepared.json"),
               `${JSON.stringify(value, null, 2)}\n`,
             );
-            yield* promoteWorkspaceDirectory(temporary, target);
+            yield* promoteWorkspaceDirectory(finalDirectory, target);
             yield* writeWorkspaceState(request.workspacePath, {
               schema: "miso.transcoder-workspace/1",
               prepareDigest,
@@ -810,6 +1108,18 @@ export const verifyPreparedTranscode = (
           message: "Prepared checkpoint is missing, invalid, or mismatched",
         }),
     });
+    if (
+      checkpoint.resultDigest !== prepared.resultDigest ||
+      JSON.stringify(checkpoint.audio) !== JSON.stringify(prepared.audio)
+    )
+      return yield* Effect.fail(
+        new StaleWorkspaceError({
+          code: "STALE_WORKSPACE",
+          phase: "workspace",
+          subject: prepared.rootPath,
+          message: "Prepared audio evidence or result identity mismatched",
+        }),
+      );
     const playlists = yield* Effect.tryPromise({
       try: () =>
         validatePlaylistSet(
@@ -875,6 +1185,35 @@ export const verifyPreparedTranscode = (
           phase: "validate",
           subject: prepared.rootPath,
           message: "Prepared rendition timelines differ",
+        }),
+      );
+    const output = [];
+    for (const rendition of RENDITIONS) {
+      const measurement = yield* ffmpeg.measureAudio(
+        prepared.toolchain.ffmpegPath,
+        join(prepared.rootPath, `${rendition.id}.m3u8`),
+        prepared.sampleRateHz,
+        prepared.durationMs,
+      );
+      if (!passesFinalAudioPolicy(measurement))
+        return yield* Effect.fail(
+          new MediaValidationError({
+            code: "MEDIA_VALIDATION",
+            phase: "validate",
+            subject: prepared.rootPath,
+            message: "Prepared output fails the audio policy",
+          }),
+        );
+      output.push({ id: rendition.id, ...publicMeasurement(measurement) });
+    }
+    if (JSON.stringify(output) !== JSON.stringify(checkpoint.audio.output))
+      return yield* Effect.fail(
+        new StaleWorkspaceError({
+          code: "STALE_WORKSPACE",
+          phase: "workspace",
+          subject: prepared.rootPath,
+          message:
+            "Prepared decoded measurements differ from checkpoint evidence",
         }),
       );
     return prepared;

@@ -15,6 +15,11 @@ import {
 import { buildLadderInvocation } from "../src/ffmpeg/invocation.js";
 import { parseSourceProbe, sourceProbeArgs } from "../src/ffmpeg/probe.js";
 import { validatePlaintextRendition } from "../src/ffmpeg/validate-media.js";
+import {
+  measureAudio,
+  parseLoudnormMeasurement,
+  planSharedGainCentiDb,
+} from "../src/ffmpeg/audio-meter.js";
 import type { NativeProcessService } from "../src/process/native-process.js";
 
 const temporaryRoot = realpath(tmpdir());
@@ -34,6 +39,8 @@ const capabilityOutputs = {
   ffprobeVersion: version("ffprobe"),
   encoders: " A..... aac                  AAC (Advanced Audio Coding)",
   muxers: " E  hls             Apple HTTP Live Streaming",
+  filters: " ... loudnorm A->A\n T.C volume A->A",
+  volumeHelp: "precision set mathematical precision double",
   hlsHelp:
     "hls_segment_type fmp4 var_stream_map hls_segment_filename master_pl_name",
   ffprobeJson: '{"program_version":{"version":"8.1.2"}}',
@@ -175,6 +182,23 @@ test("builds the frozen single-process aligned AAC ladder argv", () => {
   ).toBe(false);
 });
 
+test("places fixed-decimal double-precision gain exactly once before asplit", () => {
+  const invocation = buildLadderInvocation({
+    ffmpegPath: "/opt/ffmpeg",
+    inputPath: "/media/master.flac",
+    outputDirectory: "/work/output",
+    source: { sampleRateHz: 48_000, channels: 2 },
+    segmentTargetMs: 6_000,
+    gainCentiDb: -530,
+  });
+  const filter =
+    invocation.args[invocation.args.indexOf("-filter_complex") + 1]!;
+  expect(filter).toContain(
+    "asetpts=N/SR/TB,volume=-5.30dB:precision=double,asplit=3",
+  );
+  expect(filter.match(/volume=/gu)).toHaveLength(1);
+});
+
 test("builds ffprobe argv with the hostile absolute path as one item", () => {
   const hostile = "/media/$(touch nope);*.wav";
   const args = sourceProbeArgs(hostile);
@@ -228,10 +252,7 @@ test("parses a supported mono source and rejects ambiguous or surround audio", (
   ).toThrow(UnsupportedSourceError);
 });
 
-test.each([
-  ["clipping", 1.01],
-  ["non-finite", Number.NaN],
-] as const)("rejects %s decoded PCM", async (_name, sample) => {
+test("structural preview validation permits finite decoded overshoot", async () => {
   const root = await mkdtemp(join(await temporaryRoot, "transcoder-pcm-"));
   const playlistPath = join(root, "aac-096.m3u8");
   await writeFile(
@@ -266,11 +287,6 @@ test.each([
   );
   const process: NativeProcessService = {
     run: (request) => {
-      if (request.role === "ffmpeg-clipping-scan") {
-        const chunk = Buffer.alloc(4);
-        chunk.writeFloatLE(sample);
-        request.onStdoutChunk?.(chunk);
-      }
       return Effect.succeed({
         exitCode: 0,
         signal: null,
@@ -295,10 +311,110 @@ test.each([
           1_000,
         ),
       ),
-    ).rejects.toMatchObject({
-      message: "Decoded audio contains clipping or non-finite samples",
-    });
+    ).resolves.toMatchObject({ totalSamples: 48_000 });
   } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
+
+const loudnormJson = (inputTp = "-1.05", inputI = "-14.00") => {
+  const silence = inputTp === "-inf" && inputI === "-inf";
+  return Buffer.from(`noise {from a hostile path} before\n[Parsed_loudnorm_0 @ 0x1234]\n{
+  "input_i" : "${inputI}",
+  "input_tp" : "${inputTp}",
+  "input_lra" : "1.00",
+  "input_thresh" : "-24.00",
+  "output_i" : "${silence ? "-inf" : "-24.00"}",
+  "output_tp" : "${silence ? "-inf" : "-2.00"}",
+  "output_lra" : "1.00",
+  "output_thresh" : "-34.00",
+  "normalization_type" : "${silence ? "dynamic" : "linear"}",
+  "target_offset" : "${silence ? "inf" : "0.00"}"
+}\n`);
+};
+
+test("strictly parses pinned loudnorm JSON including silence", () => {
+  expect(parseLoudnormMeasurement("audio", loudnormJson())).toEqual({
+    integratedLoudnessCentiLufs: -1400,
+    truePeakCentiDbtp: -105,
+  });
+  expect(
+    parseLoudnormMeasurement("audio", loudnormJson("-inf", "-inf")),
+  ).toEqual({
+    integratedLoudnessCentiLufs: null,
+    truePeakCentiDbtp: null,
+  });
+  for (const malformed of [
+    Buffer.from("{}"),
+    Buffer.from(
+      loudnormJson()
+        .toString()
+        .replace(
+          '"input_tp" : "-1.05",',
+          '"input_tp" : "-1.05",\n"input_tp":"-2.00",',
+        ),
+    ),
+    loudnormJson("NaN"),
+    loudnormJson("+inf"),
+    Buffer.from(
+      loudnormJson()
+        .toString()
+        .replace('"input_lra" : "1.00"', '"input_lra" : "-inf"'),
+    ),
+    Buffer.from(
+      loudnormJson()
+        .toString()
+        .replace('"input_tp" : "-1.05"', '"input_tp" : "-inf"'),
+    ),
+    Buffer.concat([loudnormJson(), loudnormJson()]),
+    loudnormJson().subarray(0, 30),
+  ])
+    expect(() => parseLoudnormMeasurement("audio", malformed)).toThrow();
+});
+
+test("plans shared gain with negative quantized floor", () => {
+  expect(planSharedGainCentiDb([-105, -200, -300])).toBe(-50);
+  expect(planSharedGainCentiDb([372, 100, -10])).toBe(-530);
+  expect(planSharedGainCentiDb([-151, -200])).toBe(0);
+  expect(planSharedGainCentiDb([null, null])).toBe(0);
+});
+
+test.each([
+  ["finite overshoot", 1.5, false],
+  ["non-finite", Number.NaN, true],
+] as const)(
+  "decoded sample scan handles %s",
+  async (_name, sample, rejects) => {
+    const process: NativeProcessService = {
+      run: (request) => {
+        if (request.role === "ffmpeg-sample-scan") {
+          const chunk = Buffer.alloc(8);
+          chunk.writeFloatLE(sample);
+          chunk.writeFloatLE(sample, 4);
+          request.onStdoutChunk?.(chunk);
+        }
+        return Effect.succeed({
+          exitCode: 0,
+          signal: null,
+          stdout: new Uint8Array(),
+          stderrTail:
+            request.role === "ffmpeg-loudnorm-meter"
+              ? loudnormJson("3.72")
+              : new Uint8Array(),
+          progressTail: new Uint8Array(),
+          stderrTruncated: false,
+          progressTruncated: false,
+        });
+      },
+    };
+    const result = Effect.runPromise(
+      measureAudio(process, "/ffmpeg", "/audio.m3u8", 48_000, 1_000),
+    );
+    if (rejects) await expect(result).rejects.toBeDefined();
+    else
+      await expect(result).resolves.toMatchObject({
+        truePeakCentiDbtp: 372,
+        exactSamplePeak: 1.5,
+      });
+  },
+);

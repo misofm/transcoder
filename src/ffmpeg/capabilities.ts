@@ -21,6 +21,12 @@ export const FFMPEG_VERSION_ARGS = ["-version"] as const;
 export const FFPROBE_VERSION_ARGS = ["-version"] as const;
 export const FFMPEG_ENCODERS_ARGS = ["-hide_banner", "-encoders"] as const;
 export const FFMPEG_MUXERS_ARGS = ["-hide_banner", "-muxers"] as const;
+export const FFMPEG_FILTERS_ARGS = ["-hide_banner", "-filters"] as const;
+export const FFMPEG_VOLUME_HELP_ARGS = [
+  "-hide_banner",
+  "-h",
+  "filter=volume",
+] as const;
 export const FFMPEG_HLS_HELP_ARGS = [
   "-hide_banner",
   "-h",
@@ -47,6 +53,8 @@ export interface CapabilityOutputs {
   readonly ffprobeVersion: string;
   readonly encoders: string;
   readonly muxers: string;
+  readonly filters: string;
+  readonly volumeHelp: string;
   readonly hlsHelp: string;
   readonly ffprobeJson: string;
 }
@@ -192,6 +200,21 @@ export const parseToolchainFingerprint = (
   if (!/^\s*E\S*\s+hls\s/imu.test(outputs.muxers)) {
     throw capabilityError("ffmpeg", "FFmpeg HLS muxer is unavailable");
   }
+  if (!/^\s*\S+\s+loudnorm\s/imu.test(outputs.filters)) {
+    throw capabilityError("ffmpeg", "FFmpeg loudnorm filter is unavailable");
+  }
+  if (!/^\s*\S+\s+volume\s/imu.test(outputs.filters)) {
+    throw capabilityError("ffmpeg", "FFmpeg volume filter is unavailable");
+  }
+  if (
+    !/precision/iu.test(outputs.volumeHelp) ||
+    !/\bdouble\b/iu.test(outputs.volumeHelp)
+  ) {
+    throw capabilityError(
+      "ffmpeg",
+      "FFmpeg double-precision volume filter is unavailable",
+    );
+  }
   if (
     !/hls_segment_type/iu.test(outputs.hlsHelp) ||
     !/fmp4/iu.test(outputs.hlsHelp)
@@ -330,6 +353,20 @@ export const inspectToolchain = (
       FFMPEG_MUXERS_ARGS,
       CAPABILITY_OUTPUT_LIMIT,
     );
+    const filters = yield* runText(
+      process,
+      "ffmpeg",
+      ffmpegPath,
+      FFMPEG_FILTERS_ARGS,
+      CAPABILITY_OUTPUT_LIMIT,
+    );
+    const volumeHelp = yield* runText(
+      process,
+      "ffmpeg",
+      ffmpegPath,
+      FFMPEG_VOLUME_HELP_ARGS,
+      CAPABILITY_OUTPUT_LIMIT,
+    );
     const hlsHelp = yield* runText(
       process,
       "ffmpeg",
@@ -351,6 +388,8 @@ export const inspectToolchain = (
           ffprobeVersion,
           encoders,
           muxers,
+          filters,
+          volumeHelp,
           hlsHelp,
           ffprobeJson,
         }),

@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "node:http";
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 
 import { Effect } from "effect";
 
@@ -107,6 +108,10 @@ test("real FFmpeg creates one aligned three-rendition plaintext ladder", async (
   );
   expect(prepared.sampleRateHz).toBe(48_000);
   expect(prepared.segmentTargetMs).toBe(6_000);
+  expect(prepared.resultDigest).toMatch(/^[0-9a-f]{64}$/u);
+  expect(prepared.audio.policyId).toBe("miso.aac-codec-preview/1");
+  expect(prepared.audio.appliedGainCentiDb).toBe(0);
+  expect(prepared.audio.output).toEqual(prepared.audio.preview);
   for (const id of ["aac-096", "aac-160", "aac-256"] as const) {
     expect(await Bun.file(join(prepared.rootPath, `${id}.m3u8`)).exists()).toBe(
       true,
@@ -140,7 +145,6 @@ test("real FFmpeg creates one aligned three-rendition plaintext ladder", async (
         {
           generationNonce,
           rootKey,
-          keySeal: new TextEncoder().encode("opaque-test-seal"),
         },
       );
     }).pipe(Effect.provide(TranscoderNodeLive)),
@@ -153,7 +157,7 @@ test("real FFmpeg creates one aligned three-rendition plaintext ladder", async (
     }).pipe(Effect.provide(TranscoderNodeLive)),
   );
   expect(verified.verified).toBe(true);
-  expect(verified.patchCount).toBe(15);
+  expect(verified.patchCount).toBe(14);
   const index = parseQuiltIndex(await Bun.file(artifact.indexPath).bytes());
   if (process.env["MISO_PINNED_FFMPEG"] === "1") {
     const golden = `${JSON.stringify(
@@ -233,7 +237,6 @@ test("real FFmpeg creates one aligned three-rendition plaintext ladder", async (
         {
           generationNonce,
           rootKey: resumedRootKey,
-          keySeal: new TextEncoder().encode("opaque-test-seal"),
         },
       );
     }).pipe(Effect.provide(TranscoderNodeLive)),
@@ -241,6 +244,19 @@ test("real FFmpeg creates one aligned three-rendition plaintext ladder", async (
   expect(resumed.generationDigest).toBe(artifact.generationDigest);
   expect(resumedRootKey).toEqual(new Uint8Array(32));
   expect(await Bun.file(checkpointPath).exists()).toBe(true);
+  const wrongRootKey = new Uint8Array(32).fill(99);
+  await expect(
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const transcoder = yield* Transcoder;
+        return yield* transcoder.finalize(
+          { prepared, recordingId, network: "testnet" },
+          { generationNonce, rootKey: wrongRootKey },
+        );
+      }).pipe(Effect.provide(TranscoderNodeLive)),
+    ),
+  ).rejects.toBeDefined();
+  expect(wrongRootKey).toEqual(new Uint8Array(32));
   const correctCheckpoint = await readFile(checkpointPath);
   await writeFile(checkpointPath, "tampered\n");
   const checkpointKey = Uint8Array.from({ length: 32 }, (_, index) => index);
@@ -253,7 +269,6 @@ test("real FFmpeg creates one aligned three-rendition plaintext ladder", async (
           {
             generationNonce,
             rootKey: checkpointKey,
-            keySeal: new TextEncoder().encode("opaque-test-seal"),
           },
         );
       }).pipe(Effect.provide(TranscoderNodeLive)),
@@ -271,7 +286,6 @@ test("real FFmpeg creates one aligned three-rendition plaintext ladder", async (
           {
             generationNonce,
             rootKey: reusedNonceKey,
-            keySeal: new TextEncoder().encode("opaque-test-seal"),
           },
         );
       }).pipe(Effect.provide(TranscoderNodeLive)),
@@ -299,7 +313,41 @@ test("real FFmpeg creates one aligned three-rendition plaintext ladder", async (
       response.end(Buffer.from(body));
       return;
     }
-    if (url.pathname === "/key.seal") {
+    const playerAsset = new Map<string, readonly [string, string]>([
+      ["/quilt-player/", ["index.html", "text/html"]],
+      ["/quilt-player/player.js", ["player.js", "text/javascript"]],
+      ["/quilt-player/styles.css", ["styles.css", "text/css"]],
+    ]).get(url.pathname);
+    if (playerAsset !== undefined) {
+      const body = await Bun.file(
+        join(process.cwd(), "examples/quilt-player", playerAsset[0]),
+      ).arrayBuffer();
+      response.writeHead(200, {
+        "content-type": playerAsset[1],
+        "content-length": body.byteLength,
+      });
+      response.end(Buffer.from(body));
+      return;
+    }
+    if (url.pathname === "/quilt-player/hls.min.js") {
+      const body = await Bun.file(
+        join(process.cwd(), "node_modules/hls.js/dist/hls.min.js"),
+      ).arrayBuffer();
+      response.writeHead(200, {
+        "content-type": "text/javascript",
+        "content-length": body.byteLength,
+      });
+      response.end(Buffer.from(body));
+      return;
+    }
+    if (url.pathname === "/key.external") {
+      if (
+        url.searchParams.get("generation") !==
+        Buffer.from(generationNonce).toString("base64url")
+      ) {
+        response.writeHead(404).end();
+        return;
+      }
       const key = keys.get(url.searchParams.get("rendition") ?? "");
       if (key === undefined) {
         response.writeHead(404).end();
@@ -409,6 +457,43 @@ test("real FFmpeg creates one aligned three-rendition plaintext ladder", async (
           `http://127.0.0.1:${address.port}/master.m3u8`,
         );
         expect(levels).toBe(3);
+
+        const audition = await browser.newPage();
+        await audition.goto(`http://127.0.0.1:${address.port}/quilt-player/`);
+        await audition.locator("#quilt-input").setInputFiles(artifact.rootPath);
+        await audition
+          .locator("#root-key")
+          .fill(
+            Buffer.from(
+              Uint8Array.from({ length: 32 }, (_, index) => index),
+            ).toString("hex"),
+          );
+        await audition.locator("#open-button").click();
+        await audition.locator("#deck:not([hidden])").waitFor();
+        expect(await audition.locator("#status-label").textContent()).toBe(
+          "Verified and unlocked",
+        );
+        await audition
+          .locator("audio")
+          .evaluate((element) => (element as HTMLAudioElement).play());
+        await audition.waitForFunction(
+          () =>
+            (document.querySelector("audio") as HTMLAudioElement).readyState >=
+            2,
+        );
+        const autoLevel = audition.getByRole("button", { name: "Auto" });
+        const highLevel = audition.getByRole("button", { name: "256 kbps" });
+        expect(await autoLevel.getAttribute("aria-pressed")).toBe("true");
+        await highLevel.click();
+        expect(await highLevel.getAttribute("aria-pressed")).toBe("true");
+        await audition.waitForFunction(() =>
+          document
+            .querySelector('[data-level="2"]')
+            ?.classList.contains("is-active"),
+        );
+        await autoLevel.click();
+        expect(await autoLevel.getAttribute("aria-pressed")).toBe("true");
+        await audition.close();
       } finally {
         await browser.close();
       }
@@ -422,7 +507,6 @@ test("real FFmpeg creates one aligned three-rendition plaintext ladder", async (
     for (const key of keys.values()) key.fill(0);
   }
   for (const identifier of [
-    "key.seal",
     index.renditions[0]!.init.identifier,
     index.renditions[0]!.segments[0]!.identifier,
   ]) {
@@ -502,6 +586,45 @@ test("real FFmpeg preserves a 44.1 kHz stereo exact-target fixture", async () =>
   );
   expect(timelines[1]).toEqual(timelines[0]);
   expect(timelines[2]).toEqual(timelines[0]);
+  const preparedCheckpointPath = join(prepared.rootPath, "prepared.json");
+  const originalCheckpoint = await readFile(preparedCheckpointPath);
+  const forgedCheckpoint = JSON.parse(originalCheckpoint.toString("utf8")) as {
+    prepareDigest: string;
+    resultDigest: string;
+    audio: {
+      preview: Array<{ integratedLoudnessCentiLufs: number | null }>;
+    };
+    files: unknown[];
+  };
+  forgedCheckpoint.audio.preview[0]!.integratedLoudnessCentiLufs = -1234;
+  forgedCheckpoint.resultDigest = createHash("sha256")
+    .update("miso.transcoder.prepare-result/1\0")
+    .update(
+      `${JSON.stringify({
+        prepareDigest: forgedCheckpoint.prepareDigest,
+        audio: forgedCheckpoint.audio,
+        files: forgedCheckpoint.files,
+      })}\n`,
+    )
+    .digest("hex");
+  await writeFile(
+    preparedCheckpointPath,
+    `${JSON.stringify(forgedCheckpoint, null, 2)}\n`,
+  );
+  await expect(
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const transcoder = yield* Transcoder;
+        return yield* transcoder.prepare({
+          inputPath,
+          workspacePath,
+          ffmpegPath,
+          ffprobePath,
+        });
+      }).pipe(Effect.provide(TranscoderNodeLive)),
+    ),
+  ).rejects.toBeDefined();
+  await writeFile(preparedCheckpointPath, originalCheckpoint);
   const firstSegment = join(prepared.rootPath, "aac-096-00000.m4s");
   const originalSegment = await readFile(firstSegment);
   const tamperedSegment = Buffer.from(originalSegment);

@@ -1,0 +1,182 @@
+:root {
+  color-scheme: dark;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  color: #eee;
+  background: #000;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 32px 20px;
+  background: #000;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+h1,
+h2 {
+  margin: 0 0 12px;
+  font-size: 1rem;
+}
+header,
+section {
+  margin-bottom: 28px;
+}
+header p,
+.key-row p,
+.status-detail,
+footer {
+  color: #999;
+}
+
+.drop-zone {
+  display: block;
+  padding: 16px;
+  border: 1px dashed #666;
+  cursor: pointer;
+}
+
+.drop-zone:hover,
+.drop-zone.is-ready {
+  border-color: #fff;
+}
+.drop-zone input,
+.drop-zone strong,
+.drop-zone small,
+.key-row > label {
+  display: block;
+}
+.drop-zone input {
+  margin-bottom: 8px;
+}
+.drop-zone small {
+  margin-top: 4px;
+  color: #999;
+}
+.key-row {
+  margin-top: 16px;
+}
+
+.key-control {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
+.key-control input {
+  min-width: 0;
+  flex: 1;
+  font-family: inherit;
+}
+button,
+input {
+  padding: 7px 9px;
+}
+button {
+  font: inherit;
+  cursor: pointer;
+}
+button:disabled {
+  cursor: not-allowed;
+}
+.primary-action {
+  margin-top: 12px;
+}
+
+.console {
+  padding: 10px 12px;
+  border-left: 3px solid #666;
+  background: #111;
+}
+
+.console.is-working {
+  border-color: #e6b800;
+}
+.console.is-error {
+  border-color: #f55;
+}
+.console.is-success {
+  border-color: #5d5;
+}
+.status-label,
+.status-detail {
+  margin: 0;
+}
+.status-label {
+  font-weight: bold;
+}
+.generation {
+  color: #999;
+}
+
+dl {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 4px 16px;
+}
+
+dl > div {
+  display: contents;
+}
+dt {
+  color: #999;
+}
+
+dd {
+  overflow: hidden;
+  margin: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+audio {
+  width: 100%;
+  margin-top: 12px;
+}
+.level-label {
+  margin-bottom: 6px;
+  color: #999;
+}
+.level-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.level-strip button {
+  border: 1px solid #666;
+  color: #ddd;
+  background: #111;
+}
+
+.level-strip button.is-selected {
+  border-color: #fff;
+  color: #000;
+  background: #fff;
+}
+
+.level-strip button.is-active:not(.is-selected)::after {
+  content: " *";
+}
+.secondary-action {
+  margin-top: 16px;
+}
+
+footer {
+  border-top: 1px solid #333;
+  padding-top: 12px;
+  font-size: 12px;
+}
+
+@media (max-width: 520px) {
+  dl {
+    grid-template-columns: 1fr;
+  }
+  dl > div {
+    display: block;
+  }
+}
