@@ -1,4 +1,5 @@
-import { lstat, readFile, rm } from "node:fs/promises";
+import { constants } from "node:fs";
+import { lstat, open, rm } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join } from "node:path";
 
 import { Effect } from "effect";
@@ -65,8 +66,43 @@ export const cleanupPreparedTranscode = (
         if (!metadata.isDirectory() || metadata.isSymbolicLink()) {
           throw io(prepared.rootPath, "Cleanup target is not a safe directory");
         }
+        const checkpointPath = join(prepared.rootPath, "prepared.json");
+        const handle = await open(
+          checkpointPath,
+          constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0),
+        );
+        let checkpointBytes: Buffer;
+        try {
+          const checkpointMetadata = await handle.stat();
+          if (
+            !checkpointMetadata.isFile() ||
+            checkpointMetadata.size < 1 ||
+            checkpointMetadata.size > 4_194_304
+          )
+            throw io(checkpointPath, "Cleanup checkpoint exceeds its limit");
+          checkpointBytes = Buffer.allocUnsafe(checkpointMetadata.size);
+          let offset = 0;
+          while (offset < checkpointBytes.byteLength) {
+            const result = await handle.read(
+              checkpointBytes,
+              offset,
+              checkpointBytes.byteLength - offset,
+              null,
+            );
+            if (result.bytesRead === 0)
+              throw io(
+                checkpointPath,
+                "Cleanup checkpoint changed during read",
+              );
+            offset += result.bytesRead;
+          }
+          if ((await handle.read(Buffer.alloc(1), 0, 1, null)).bytesRead !== 0)
+            throw io(checkpointPath, "Cleanup checkpoint changed during read");
+        } finally {
+          await handle.close();
+        }
         const checkpoint = JSON.parse(
-          await readFile(join(prepared.rootPath, "prepared.json"), "utf8"),
+          checkpointBytes.toString("utf8"),
         ) as Record<string, unknown>;
         if (
           checkpoint["schema"] !== "miso.transcoder-prepared/1" ||

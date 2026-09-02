@@ -23,7 +23,21 @@ const readPlaylist = async (path: string): Promise<Buffer> => {
       metadata.size > PLAYLIST_LIMIT
     )
       throw new RangeError();
-    return await handle.readFile();
+    const bytes = Buffer.allocUnsafe(metadata.size);
+    let offset = 0;
+    while (offset < bytes.byteLength) {
+      const { bytesRead } = await handle.read(
+        bytes,
+        offset,
+        bytes.byteLength - offset,
+        null,
+      );
+      if (bytesRead === 0) throw new RangeError();
+      offset += bytesRead;
+    }
+    if ((await handle.read(Buffer.alloc(1), 0, 1, null)).bytesRead !== 0)
+      throw new RangeError();
+    return bytes;
   } finally {
     await handle.close();
   }

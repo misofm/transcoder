@@ -9,7 +9,6 @@ import {
   chmod,
   mkdir,
   open,
-  readFile,
   readdir,
   rename,
   rmdir,
@@ -120,7 +119,22 @@ const readBounded = async (
     const metadata = await handle.stat();
     if (!metadata.isFile() || metadata.size < 1 || metadata.size > ceiling)
       throw new RangeError("file outside bounds");
-    return await handle.readFile();
+    const bytes = Buffer.allocUnsafe(metadata.size);
+    let offset = 0;
+    while (offset < bytes.byteLength) {
+      const { bytesRead } = await handle.read(
+        bytes,
+        offset,
+        bytes.byteLength - offset,
+        null,
+      );
+      if (bytesRead === 0)
+        throw new RangeError("file shrank during bounded read");
+      offset += bytesRead;
+    }
+    if ((await handle.read(Buffer.alloc(1), 0, 1, null)).bytesRead !== 0)
+      throw new RangeError("file grew during bounded read");
+    return bytes;
   } finally {
     await handle.close();
   }
@@ -142,20 +156,41 @@ const inspectAndHash = async (
     )
       throw new RangeError("patch outside bounds");
     const hash = createHash("sha256");
-    for await (const chunk of handle.createReadStream({ autoClose: false }))
+    let bytes = 0;
+    for await (const chunk of handle.createReadStream({
+      autoClose: false,
+      highWaterMark: 64 * 1024,
+    })) {
+      bytes += chunk.byteLength;
+      if (bytes > metadata.size)
+        throw new RangeError("patch grew while hashing");
       hash.update(chunk);
+    }
+    if (bytes !== metadata.size)
+      throw new RangeError("patch changed while hashing");
     return { bytes: metadata.size, sha256: hash.digest("hex") };
   } finally {
     await handle.close();
   }
 };
 
-const encryptFileAtomic = async (
+export type SegmentEncryptionTransition =
+  | "file-fsync"
+  | "rename"
+  | "parent-fsync";
+
+/** @internal Exported only for durable-transition fault injection. */
+export const encryptFileAtomic = async (
   plaintextPath: string,
   destinationPath: string,
   key: Uint8Array,
   sequence: number,
   signal: AbortSignal,
+  hooks: {
+    readonly afterTransition?: (
+      transition: SegmentEncryptionTransition,
+    ) => void | Promise<void>;
+  } = {},
 ): Promise<{
   readonly plainBytes: number;
   readonly cipherBytes: number;
@@ -171,12 +206,15 @@ const encryptFileAtomic = async (
     !metadata.isFile() ||
     metadata.size < 1 ||
     metadata.size > MAX_SEGMENT_BYTES
-  )
+  ) {
+    await input.close();
     throw new RangeError("segment size outside supported bounds");
+  }
   const temporary = `${destinationPath}.tmp-${process.pid}-${randomBytes(8).toString("hex")}`;
   let output: Awaited<ReturnType<typeof open>> | undefined;
   const hash = createHash("sha256");
   let cipherBytes = 0;
+  let plainBytesRead = 0;
   try {
     output = await open(
       temporary,
@@ -194,6 +232,9 @@ const encryptFileAtomic = async (
         null,
       );
       if (bytesRead === 0) break;
+      plainBytesRead += bytesRead;
+      if (plainBytesRead > metadata.size)
+        throw new RangeError("segment grew during encryption");
       const encrypted = cipher.update(buffer.subarray(0, bytesRead));
       if (encrypted.byteLength > 0) {
         await output.write(encrypted);
@@ -206,12 +247,16 @@ const encryptFileAtomic = async (
     hash.update(final);
     cipherBytes += final.byteLength;
     await output.sync();
+    await hooks.afterTransition?.("file-fsync");
   } catch (error) {
+    await output?.close().catch(() => undefined);
+    output = undefined;
+    await input.close().catch(() => undefined);
     await unlink(temporary).catch(() => undefined);
     throw error;
   } finally {
-    await input.close();
-    await output?.close();
+    await input.close().catch(() => undefined);
+    await output?.close().catch(() => undefined);
   }
   try {
     if (cipherBytes !== encryptedSize(metadata.size))
@@ -273,9 +318,11 @@ const encryptFileAtomic = async (
     }
     throwIfAborted(signal);
     await rename(temporary, destinationPath);
+    await hooks.afterTransition?.("rename");
     const parent = await open(join(destinationPath, ".."), constants.O_RDONLY);
     try {
       await parent.sync();
+      await hooks.afterTransition?.("parent-fsync");
     } finally {
       await parent.close();
     }
@@ -608,12 +655,12 @@ const finalizeUnsafe = async (
         throw artifactError(temporary, "Artifact has missing or extra files");
       const patches: QuiltPatch[] = [];
       for (const identifier of expected) {
-        const bytes = await readFile(join(temporary, identifier));
+        const inspected = await inspectAndHash(join(temporary, identifier));
         patches.push({
           identifier,
           path: join(target, identifier),
-          bytes: bytes.byteLength,
-          sha256: sha256Hex(bytes),
+          bytes: inspected.bytes,
+          sha256: inspected.sha256,
         });
       }
       throwIfAborted(signal);

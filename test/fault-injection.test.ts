@@ -4,8 +4,12 @@ import { join } from "node:path";
 
 import { Effect, Fiber } from "effect";
 
-import { finalizeTranscode } from "../src/pipeline/finalize.js";
+import {
+  encryptFileAtomic,
+  finalizeTranscode,
+} from "../src/pipeline/finalize.js";
 import type { PreparedTranscode } from "../src/model.js";
+import { decryptSegment } from "../src/crypto/aes-cbc.js";
 import {
   acquireWorkspaceLockPromise,
   releaseWorkspaceLockPromise,
@@ -65,6 +69,45 @@ test("failed finalization zeroes the owned key and cannot promote partial output
       (identifier) => !/^[0-9a-f]{64}$/u.test(identifier),
     ),
   ).toBe(true);
+});
+
+test("segment encryption faults after every durable transition", async () => {
+  for (const transition of ["file-fsync", "rename", "parent-fsync"] as const) {
+    const root = await mkdtemp(
+      join("/private/tmp", "transcoder-segment-fault-"),
+    );
+    roots.push(root);
+    const plaintext = join(root, "plain.m4s");
+    const destination = join(root, "cipher.m4s");
+    await writeFile(plaintext, "complete fragment", { mode: 0o600 });
+    const key = new Uint8Array(16).fill(5);
+    await expect(
+      encryptFileAtomic(
+        plaintext,
+        destination,
+        key,
+        0,
+        new AbortController().signal,
+        {
+          afterTransition: (current) => {
+            if (current === transition) throw new Error("injected crash");
+          },
+        },
+      ),
+    ).rejects.toBeDefined();
+    const destinationFile = Bun.file(destination);
+    if (transition === "file-fsync") {
+      expect(await destinationFile.exists()).toBe(false);
+    } else {
+      expect(decryptSegment(await destinationFile.bytes(), key, 0)).toEqual(
+        new TextEncoder().encode("complete fragment"),
+      );
+    }
+    expect((await readdir(root)).some((name) => name.includes(".tmp-"))).toBe(
+      false,
+    );
+    key.fill(0);
+  }
 });
 
 test("interrupted encryption joins cleanup before scope completion", async () => {

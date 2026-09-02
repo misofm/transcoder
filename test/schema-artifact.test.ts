@@ -108,6 +108,8 @@ test("rejects unknown keys and cross-field mismatches", () => {
       ...index,
       renditions: renditions.map((rendition) => ({
         ...rendition,
+        averageBandwidth: 26,
+        peakBandwidth: 26,
         segments: [{ ...rendition.segments[0]!, durationMs: 10_000 }],
       })),
     }),

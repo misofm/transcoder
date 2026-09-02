@@ -1,8 +1,9 @@
+import { constants } from "node:fs";
 import {
   chmod,
   mkdir,
   lstat,
-  readFile,
+  open,
   readdir,
   rename,
   rm,
@@ -183,9 +184,37 @@ export const readWorkspaceState = (
     try: async () => {
       const path = join(workspacePath, "workspace.json");
       await assertNoSymlinkComponentsPromise(path);
-      const bytes = await readFile(path);
-      if (bytes.byteLength > 64 * 1024)
-        throw io(path, "Workspace checkpoint exceeds its byte limit");
+      const handle = await open(
+        path,
+        constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0),
+      );
+      let bytes: Buffer;
+      try {
+        const metadata = await handle.stat();
+        if (
+          !metadata.isFile() ||
+          metadata.size < 1 ||
+          metadata.size > 64 * 1024
+        )
+          throw io(path, "Workspace checkpoint exceeds its byte limit");
+        bytes = Buffer.allocUnsafe(metadata.size);
+        let offset = 0;
+        while (offset < bytes.byteLength) {
+          const result = await handle.read(
+            bytes,
+            offset,
+            bytes.byteLength - offset,
+            null,
+          );
+          if (result.bytesRead === 0)
+            throw io(path, "Workspace checkpoint changed during read");
+          offset += result.bytesRead;
+        }
+        if ((await handle.read(Buffer.alloc(1), 0, 1, null)).bytesRead !== 0)
+          throw io(path, "Workspace checkpoint changed during read");
+      } finally {
+        await handle.close();
+      }
       return parseWorkspaceState(
         new TextDecoder("utf-8", { fatal: true }).decode(bytes),
       );

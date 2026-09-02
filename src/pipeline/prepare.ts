@@ -85,16 +85,28 @@ const playlistFailure = (subject: string, message: string) =>
     message,
   });
 
-const hashFile = async (path: string): Promise<string> => {
+const hashFile = async (
+  path: string,
+  maximum = Number.MAX_SAFE_INTEGER,
+): Promise<string> => {
   const handle = await open(
     path,
     constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0),
   );
   try {
-    if (!(await handle.stat()).isFile()) throw new TypeError();
+    const metadata = await handle.stat();
+    if (!metadata.isFile() || metadata.size > maximum) throw new TypeError();
     const hash = createHash("sha256");
-    for await (const chunk of handle.createReadStream({ autoClose: false }))
+    let bytes = 0;
+    for await (const chunk of handle.createReadStream({
+      autoClose: false,
+      highWaterMark: 64 * 1024,
+    })) {
+      bytes += chunk.byteLength;
+      if (bytes > metadata.size || bytes > maximum) throw new RangeError();
       hash.update(chunk);
+    }
+    if (bytes !== metadata.size) throw new RangeError();
     return hash.digest("hex");
   } finally {
     await handle.close();
@@ -113,7 +125,22 @@ const readBoundedFile = async (
     const metadata = await handle.stat();
     if (!metadata.isFile() || metadata.size < 1 || metadata.size > maximum)
       throw new RangeError("file outside bounded read limit");
-    return await handle.readFile();
+    const bytes = Buffer.allocUnsafe(metadata.size);
+    let offset = 0;
+    while (offset < bytes.byteLength) {
+      const { bytesRead } = await handle.read(
+        bytes,
+        offset,
+        bytes.byteLength - offset,
+        null,
+      );
+      if (bytesRead === 0)
+        throw new RangeError("file shrank during bounded read");
+      offset += bytesRead;
+    }
+    if ((await handle.read(Buffer.alloc(1), 0, 1, null)).bytesRead !== 0)
+      throw new RangeError("file grew during bounded read");
+    return bytes;
   } finally {
     await handle.close();
   }
@@ -151,7 +178,15 @@ const collectPlaintextFiles = async (
   for (const identifier of identifiers) {
     const path = join(rootPath, identifier);
     const metadata = await lstat(path);
-    if (!metadata.isFile() || metadata.isSymbolicLink())
+    const maximum = identifier.endsWith(".m3u8")
+      ? 1_048_576
+      : 256 * 1024 * 1024;
+    if (
+      !metadata.isFile() ||
+      metadata.isSymbolicLink() ||
+      metadata.size < 1 ||
+      metadata.size > maximum
+    )
       throw playlistFailure(
         identifier,
         "Plaintext output is not a regular file",
@@ -165,7 +200,7 @@ const collectPlaintextFiles = async (
     files.push({
       identifier,
       bytes: metadata.size,
-      sha256: await hashFile(path),
+      sha256: await hashFile(path, maximum),
     });
   }
   return files;

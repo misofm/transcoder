@@ -30,7 +30,22 @@ const readBounded = async (path: string, maximum: number): Promise<Buffer> => {
     const metadata = await handle.stat();
     if (!metadata.isFile() || metadata.size < 1 || metadata.size > maximum)
       throw failure(path, "Artifact file is outside its byte limit");
-    return await handle.readFile();
+    const bytes = Buffer.allocUnsafe(metadata.size);
+    let offset = 0;
+    while (offset < bytes.byteLength) {
+      const { bytesRead } = await handle.read(
+        bytes,
+        offset,
+        bytes.byteLength - offset,
+        null,
+      );
+      if (bytesRead === 0)
+        throw failure(path, "Artifact file shrank during verification");
+      offset += bytesRead;
+    }
+    if ((await handle.read(Buffer.alloc(1), 0, 1, null)).bytesRead !== 0)
+      throw failure(path, "Artifact file grew during verification");
+    return bytes;
   } finally {
     await handle.close();
   }
@@ -52,8 +67,18 @@ const inspectAndHash = async (
     )
       throw failure(path, "Patch must be a bounded regular file");
     const hash = createHash("sha256");
-    for await (const chunk of handle.createReadStream({ autoClose: false }))
+    let bytes = 0;
+    for await (const chunk of handle.createReadStream({
+      autoClose: false,
+      highWaterMark: 64 * 1024,
+    })) {
+      bytes += chunk.byteLength;
+      if (bytes > metadata.size)
+        throw failure(path, "Patch grew during verification");
       hash.update(chunk);
+    }
+    if (bytes !== metadata.size)
+      throw failure(path, "Patch changed during verification");
     return { bytes: metadata.size, sha256: hash.digest("hex") };
   } finally {
     await handle.close();
