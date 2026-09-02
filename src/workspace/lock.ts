@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { constants } from "node:fs";
 import { hostname } from "node:os";
-import { open, unlink } from "node:fs/promises";
+import { link, open, rename, unlink } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 
 import { Effect } from "effect";
@@ -211,7 +211,28 @@ export const acquireWorkspaceLockPromise = async (
   if ((options.isPidAlive ?? defaultPidAlive)(existing.pid)) {
     throw locked(path, "Workspace lock owner is still alive");
   }
-  await unlink(path);
+  const claimPath = join(
+    workspacePath,
+    `.transcoder.lock.recover-${process.pid}-${randomBytes(8).toString("hex")}`,
+  );
+  try {
+    await rename(path, claimPath);
+  } catch (error) {
+    if (code(error) === "ENOENT")
+      throw locked(path, "Workspace lock changed during stale recovery");
+    throw io(path, "Workspace lock could not be claimed for recovery");
+  }
+  const claimed = await readLock(claimPath);
+  if (claimed.token !== existing.token) {
+    try {
+      await link(claimPath, path);
+      await unlink(claimPath);
+    } catch {
+      // Another owner has already installed a lock; retain the claim for audit.
+    }
+    throw locked(path, "Workspace lock changed during stale recovery");
+  }
+  await unlink(claimPath);
   await syncDirectory(workspacePath);
   try {
     return await create();
@@ -278,5 +299,5 @@ export const withWorkspaceLock = <A, E, R>(
   Effect.acquireUseRelease(
     acquireWorkspaceLock(workspacePath, operation, options),
     use,
-    (lock) => releaseWorkspaceLock(lock).pipe(Effect.orDie),
+    (lock) => releaseWorkspaceLock(lock),
   );

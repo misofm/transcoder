@@ -188,12 +188,14 @@ export const makeNodeNativeProcess = (
             | ProcessOutputLimitError
             | ProcessSpawnError
             | undefined;
+          let outputForceTimer: ReturnType<typeof setTimeout> | undefined;
 
           const finish = (
             effect: Effect.Effect<NativeProcessResult, NativeProcessError>,
           ) => {
             if (completed) return;
             completed = true;
+            if (outputForceTimer !== undefined) clearTimeout(outputForceTimer);
             resume(effect);
           };
 
@@ -234,6 +236,10 @@ export const makeNodeNativeProcess = (
               limitBytes,
             });
             child.kill("SIGTERM");
+            outputForceTimer ??= setTimeout(() => {
+              if (child.exitCode === null && child.signalCode === null)
+                child.kill("SIGKILL");
+            }, forceKillAfterMs);
           };
 
           child.stdout?.on("data", (chunk: Buffer | string) => {
@@ -259,6 +265,10 @@ export const makeNodeNativeProcess = (
                 reason: safeReason(error),
               });
               child.kill("SIGTERM");
+              outputForceTimer ??= setTimeout(() => {
+                if (child.exitCode === null && child.signalCode === null)
+                  child.kill("SIGKILL");
+              }, forceKillAfterMs);
             }
           });
 

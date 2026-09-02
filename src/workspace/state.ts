@@ -1,4 +1,12 @@
-import { chmod, mkdir, lstat, readFile, rename } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  lstat,
+  readFile,
+  readdir,
+  rename,
+  rm,
+} from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 
 import { Effect } from "effect";
@@ -80,6 +88,45 @@ export const initializeWorkspace = (
         : io(workspacePath, "Workspace initialization failed"),
   });
 
+/** Removes only abandoned atomic-write and staging names while the caller holds the workspace lock. */
+export const cleanupWorkspaceTemporaries = (
+  workspacePath: string,
+): Effect.Effect<void, InvalidRequestError | WorkspaceIoError> =>
+  Effect.uninterruptible(
+    Effect.tryPromise({
+      try: async () => {
+        await assertNoSymlinkComponentsPromise(workspacePath);
+        const roots = [
+          workspacePath,
+          join(workspacePath, "plaintext"),
+          join(workspacePath, "generations"),
+        ];
+        for (const root of roots) {
+          await assertNoSymlinkComponentsPromise(root);
+          for (const entry of await readdir(root, { withFileTypes: true })) {
+            const stagingDirectory =
+              entry.isDirectory() &&
+              /^\.tmp-[0-9]+-[0-9a-f]+$/u.test(entry.name);
+            const atomicFile =
+              entry.isFile() &&
+              /^\.?[A-Za-z0-9._-]+\.tmp-[0-9]+-[0-9a-f]+$/u.test(entry.name);
+            if (stagingDirectory || atomicFile) {
+              await rm(join(root, entry.name), {
+                recursive: stagingDirectory,
+                force: true,
+              });
+            }
+          }
+        }
+      },
+      catch: (error) =>
+        error instanceof InvalidRequestError ||
+        error instanceof WorkspaceIoError
+          ? error
+          : io(workspacePath, "Abandoned workspace cleanup failed"),
+    }),
+  );
+
 export const writeWorkspaceState = (
   workspacePath: string,
   state: WorkspaceState,
@@ -94,6 +141,11 @@ const digest = (value: unknown): value is string =>
 
 export const parseWorkspaceState = (text: string): WorkspaceState => {
   try {
+    for (const key of ["schema", "prepareDigest", "generationDigest"])
+      if (
+        Array.from(text.matchAll(new RegExp(`"${key}"\\s*:`, "gu"))).length > 1
+      )
+        throw new TypeError();
     const value: unknown = JSON.parse(text);
     if (typeof value !== "object" || value === null || Array.isArray(value))
       throw new TypeError();
@@ -147,6 +199,11 @@ export const readWorkspaceState = (
 export const promoteWorkspaceDirectory = (
   temporaryPath: string,
   destinationPath: string,
+  hooks: {
+    readonly afterTransition?: (
+      transition: "rename" | "parent-fsync",
+    ) => void | Promise<void>;
+  } = {},
 ): Effect.Effect<void, InvalidRequestError | WorkspaceIoError> => {
   if (!isAbsolute(temporaryPath) || !isAbsolute(destinationPath)) {
     return Effect.fail(
@@ -164,11 +221,13 @@ export const promoteWorkspaceDirectory = (
         await assertNoSymlinkComponentsPromise(temporaryPath);
         await assertNoSymlinkComponentsPromise(destinationPath, true);
         await rename(temporaryPath, destinationPath);
+        await hooks.afterTransition?.("rename");
         const parent = await import("node:fs/promises").then((fs) =>
           fs.open(join(destinationPath, ".."), "r"),
         );
         try {
           await parent.sync();
+          await hooks.afterTransition?.("parent-fsync");
         } finally {
           await parent.close();
         }

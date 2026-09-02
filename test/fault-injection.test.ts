@@ -1,8 +1,8 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdtemp, mkdir, readdir, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, open, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { Effect } from "effect";
+import { Effect, Fiber } from "effect";
 
 import { finalizeTranscode } from "../src/pipeline/finalize.js";
 import type { PreparedTranscode } from "../src/model.js";
@@ -30,7 +30,10 @@ test("failed finalization zeroes the owned key and cannot promote partial output
       ffmpegPath: "/ffmpeg",
       ffprobePath: "/ffprobe",
       ffmpegVersion: "ffmpeg version test",
+      ffmpegBuild: "built with test",
       ffprobeVersion: "ffprobe version test",
+      ffprobeBuild: "built with test",
+      configuration: "configuration: test",
       libavcodecVersion: "test",
       libavformatVersion: "test",
       capabilities: [],
@@ -55,6 +58,73 @@ test("failed finalization zeroes the owned key and cannot promote partial output
   expect(
     (await readdir(generations)).every(
       (identifier) => !/^[0-9a-f]{64}$/u.test(identifier),
+    ),
+  ).toBe(true);
+});
+
+test("interrupted encryption joins cleanup before scope completion", async () => {
+  const workspace = await mkdtemp(join("/private/tmp", "transcoder-cancel-"));
+  roots.push(workspace);
+  const digest = "d".repeat(64);
+  const rootPath = join(workspace, "plaintext", digest);
+  await mkdir(rootPath, { recursive: true, mode: 0o700 });
+  await mkdir(join(workspace, "generations"), { mode: 0o700 });
+  for (const id of ["aac-096", "aac-160", "aac-256"] as const) {
+    await writeFile(join(rootPath, `${id}-init.mp4`), "i");
+    const segment = join(rootPath, `${id}-00000.m4s`);
+    const handle = await open(segment, "w", 0o600);
+    await handle.truncate(32 * 1024 * 1024);
+    await handle.close();
+    await writeFile(
+      join(rootPath, `${id}.m3u8`),
+      `#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:6\n#EXT-X-PLAYLIST-TYPE:VOD\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-MAP:URI="${id}-init.mp4"\n#EXTINF:6.000,\n${id}-00000.m4s\n#EXT-X-ENDLIST\n`,
+    );
+  }
+  const prepared: PreparedTranscode = {
+    prepareDigest: digest,
+    rootPath,
+    sourceSha256: "e".repeat(64),
+    durationMs: 6_000,
+    sampleRateHz: 48_000,
+    segmentTargetMs: 6_000,
+    toolchain: {
+      ffmpegPath: "/ffmpeg",
+      ffprobePath: "/ffprobe",
+      ffmpegVersion: "ffmpeg version test",
+      ffmpegBuild: "built with test",
+      ffprobeVersion: "ffprobe version test",
+      ffprobeBuild: "built with test",
+      configuration: "configuration: test",
+      libavcodecVersion: "test",
+      libavformatVersion: "test",
+      capabilities: [],
+      sha256: "f".repeat(64),
+    },
+  };
+  const rootKey = new Uint8Array(32).fill(9);
+  const fiber = Effect.runFork(
+    finalizeTranscode(
+      {
+        prepared,
+        recordingId: `0x${"02".repeat(32)}`,
+        network: "testnet",
+        encryptionConcurrency: 1,
+      },
+      {
+        generationNonce: new Uint8Array(32).fill(10),
+        rootKey,
+        keySeal: new Uint8Array([1]),
+      },
+    ),
+  );
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  await Effect.runPromise(Fiber.interrupt(fiber));
+  expect(rootKey).toEqual(new Uint8Array(32));
+  const generations = join(workspace, "generations");
+  expect(
+    (await readdir(generations)).every(
+      (identifier) =>
+        !/^[0-9a-f]{64}$/u.test(identifier) && !identifier.startsWith(".tmp-"),
     ),
   ).toBe(true);
 });

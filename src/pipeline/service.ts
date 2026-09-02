@@ -1,12 +1,16 @@
-import { join } from "node:path";
-
 import { Context, Effect, Layer } from "effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 
 import type {
   ArtifactValidationError,
   CryptoError,
+  InvalidRequestError,
+  StaleWorkspaceError,
   WorkspaceIoError,
+  WorkspaceLockedError,
 } from "../errors.js";
+import { StaleWorkspaceError as StaleWorkspaceFailure } from "../errors.js";
 import { Ffmpeg } from "../ffmpeg/service.js";
 import type {
   FinalizeRequest,
@@ -17,8 +21,18 @@ import type {
 } from "../model.js";
 import { TranscodeObserver } from "../observer.js";
 import { withWorkspaceLock } from "../workspace/lock.js";
+import {
+  cleanupWorkspaceTemporaries,
+  readWorkspaceState,
+  writeWorkspaceState,
+} from "../workspace/state.js";
 import { finalizeTranscode } from "./finalize.js";
-import { prepareTranscode, type PrepareError } from "./prepare.js";
+import { cleanupPreparedTranscode } from "./cleanup.js";
+import {
+  prepareTranscode,
+  verifyPreparedTranscode,
+  type PrepareError,
+} from "./prepare.js";
 import { verifyArtifact } from "./verify.js";
 
 export type FinalizeError =
@@ -26,6 +40,11 @@ export type FinalizeError =
   | ArtifactValidationError
   | WorkspaceIoError;
 export type VerifyError = ArtifactValidationError;
+export type CleanupError =
+  | InvalidRequestError
+  | WorkspaceIoError
+  | WorkspaceLockedError
+  | StaleWorkspaceError;
 
 export interface TranscoderService {
   readonly prepare: (
@@ -38,6 +57,9 @@ export interface TranscoderService {
   readonly verify: (
     artifact: QuiltArtifact,
   ) => Effect.Effect<VerifiedArtifact, VerifyError>;
+  readonly cleanupPrepared: (
+    prepared: import("../model.js").PreparedTranscode,
+  ) => Effect.Effect<void, CleanupError>;
 }
 
 export class Transcoder extends Context.Service<
@@ -48,6 +70,8 @@ export class Transcoder extends Context.Service<
 export const TranscoderLive = Layer.effect(
   Transcoder,
   Effect.gen(function* () {
+    yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
     const ffmpeg = yield* Ffmpeg;
     const observer = yield* TranscodeObserver;
     const around = <A, E>(
@@ -65,15 +89,53 @@ export const TranscoderLive = Layer.effect(
           prepareTranscode(request).pipe(Effect.provideService(Ffmpeg, ffmpeg)),
         ),
       finalize: (request, material) => {
-        const workspacePath = join(request.prepared.rootPath, "..", "..");
+        const workspacePath = path.join(request.prepared.rootPath, "..", "..");
         return around(
           "finalize",
           withWorkspaceLock(workspacePath, "finalize", () =>
-            finalizeTranscode(request, material),
+            cleanupWorkspaceTemporaries(workspacePath).pipe(
+              Effect.andThen(verifyPreparedTranscode(request.prepared)),
+              Effect.provideService(Ffmpeg, ffmpeg),
+              Effect.andThen(finalizeTranscode(request, material)),
+              Effect.tap((artifact) =>
+                writeWorkspaceState(workspacePath, {
+                  schema: "miso.transcoder-workspace/1",
+                  prepareDigest: request.prepared.prepareDigest,
+                  generationDigest: artifact.generationDigest,
+                }),
+              ),
+            ),
           ),
         ).pipe(Effect.ensuring(Effect.sync(() => material.rootKey.fill(0))));
       },
       verify: (artifact) => around("verify", verifyArtifact(artifact)),
+      cleanupPrepared: (prepared) => {
+        const workspacePath = path.join(prepared.rootPath, "..", "..");
+        return withWorkspaceLock(workspacePath, "cleanup", () =>
+          Effect.gen(function* () {
+            const state = yield* readWorkspaceState(workspacePath);
+            if (
+              state.prepareDigest !== undefined &&
+              state.prepareDigest !== prepared.prepareDigest
+            )
+              return yield* Effect.fail(
+                new StaleWorkspaceFailure({
+                  code: "STALE_WORKSPACE",
+                  phase: "workspace",
+                  subject: prepared.rootPath,
+                  message: "Cleanup target is not the current preparation",
+                }),
+              );
+            yield* cleanupPreparedTranscode(prepared);
+            yield* writeWorkspaceState(workspacePath, {
+              schema: "miso.transcoder-workspace/1",
+              ...(state.generationDigest === undefined
+                ? {}
+                : { generationDigest: state.generationDigest }),
+            });
+          }),
+        );
+      },
     };
   }),
 );

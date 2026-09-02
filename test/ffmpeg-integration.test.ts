@@ -1,5 +1,12 @@
 import { afterAll, expect, test } from "bun:test";
-import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import {
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "node:http";
@@ -10,6 +17,9 @@ import { Effect } from "effect";
 import { Transcoder } from "../src/pipeline/service.js";
 import { TranscoderNodeLive } from "../src/node.js";
 import { deriveRenditionKey } from "../src/crypto/hkdf.js";
+import { decryptSegment } from "../src/crypto/aes-cbc.js";
+import { parseQuiltIndex } from "../src/schema.js";
+import { parsePlaintextMediaPlaylist } from "../src/hls/playlist.js";
 
 const roots: string[] = [];
 afterAll(async () =>
@@ -72,9 +82,16 @@ test("real FFmpeg creates one aligned three-rendition plaintext ladder", async (
   const inputPath = join(root, "hostile ; $(no-shell) *.wav");
   const workspacePath = join(root, "workspace");
   await writeFile(inputPath, wav(48_000, 1, 7), { mode: 0o600 });
-  const ffmpegPath = process.env["MISO_FFMPEG"] ?? "/opt/homebrew/bin/ffmpeg";
+  const ffmpegPath =
+    process.env["MISO_FFMPEG"] ??
+    (process.platform === "darwin"
+      ? "/opt/homebrew/bin/ffmpeg"
+      : "/usr/bin/ffmpeg");
   const ffprobePath =
-    process.env["MISO_FFPROBE"] ?? "/opt/homebrew/bin/ffprobe";
+    process.env["MISO_FFPROBE"] ??
+    (process.platform === "darwin"
+      ? "/opt/homebrew/bin/ffprobe"
+      : "/usr/bin/ffprobe");
   const prepared = await Effect.runPromise(
     Effect.gen(function* () {
       const transcoder = yield* Transcoder;
@@ -135,6 +152,44 @@ test("real FFmpeg creates one aligned three-rendition plaintext ladder", async (
   );
   expect(verified.verified).toBe(true);
   expect(verified.patchCount).toBe(15);
+  const index = parseQuiltIndex(await Bun.file(artifact.indexPath).bytes());
+  const verificationRootKey = Uint8Array.from(
+    { length: 32 },
+    (_, index) => index,
+  );
+  try {
+    for (const rendition of index.renditions) {
+      const key = deriveRenditionKey(
+        verificationRootKey,
+        recordingId,
+        generationNonce,
+        rendition.id,
+      );
+      try {
+        for (const segment of rendition.segments) {
+          const decrypted = decryptSegment(
+            await Bun.file(join(artifact.rootPath, segment.identifier)).bytes(),
+            key,
+            segment.sequence,
+          );
+          expect(decrypted).toEqual(
+            await Bun.file(join(prepared.rootPath, segment.identifier)).bytes(),
+          );
+          decrypted.fill(0);
+        }
+      } finally {
+        key.fill(0);
+      }
+    }
+  } finally {
+    verificationRootKey.fill(0);
+  }
+  const checkpointPath = join(
+    workspacePath,
+    "generations",
+    `${artifact.generationDigest}.json`,
+  );
+  await unlink(checkpointPath);
   const resumedRootKey = Uint8Array.from({ length: 32 }, (_, index) => index);
   const resumed = await Effect.runPromise(
     Effect.gen(function* () {
@@ -158,11 +213,44 @@ test("real FFmpeg creates one aligned three-rendition plaintext ladder", async (
   );
   expect(resumed.generationDigest).toBe(artifact.generationDigest);
   expect(resumedRootKey).toEqual(new Uint8Array(32));
-  expect(
-    await Bun.file(
-      join(workspacePath, "generations", `${artifact.generationDigest}.json`),
-    ).exists(),
-  ).toBe(true);
+  expect(await Bun.file(checkpointPath).exists()).toBe(true);
+  const correctCheckpoint = await readFile(checkpointPath);
+  await writeFile(checkpointPath, "tampered\n");
+  const checkpointKey = Uint8Array.from({ length: 32 }, (_, index) => index);
+  await expect(
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const transcoder = yield* Transcoder;
+        return yield* transcoder.finalize(
+          { prepared, recordingId, network: "testnet" },
+          {
+            generationNonce,
+            rootKey: checkpointKey,
+            keySeal: new TextEncoder().encode("opaque-test-seal"),
+          },
+        );
+      }).pipe(Effect.provide(TranscoderNodeLive)),
+    ),
+  ).rejects.toBeDefined();
+  expect(checkpointKey).toEqual(new Uint8Array(32));
+  await writeFile(checkpointPath, correctCheckpoint);
+  const reusedNonceKey = Uint8Array.from({ length: 32 }, (_, index) => index);
+  await expect(
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const transcoder = yield* Transcoder;
+        return yield* transcoder.finalize(
+          { prepared, recordingId, network: "mainnet" },
+          {
+            generationNonce,
+            rootKey: reusedNonceKey,
+            keySeal: new TextEncoder().encode("opaque-test-seal"),
+          },
+        );
+      }).pipe(Effect.provide(TranscoderNodeLive)),
+    ),
+  ).rejects.toBeDefined();
+  expect(reusedNonceKey).toEqual(new Uint8Array(32));
 
   const server = createServer(async (request, response) => {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
@@ -245,7 +333,12 @@ test("real FFmpeg creates one aligned three-rendition plaintext ladder", async (
                   Hls: typeof import("hls.js").default;
                 }
               ).Hls;
-              const hls = new HlsConstructor({ autoStartLoad: true });
+              const hls = new HlsConstructor({
+                autoStartLoad: false,
+                maxBufferLength: 1,
+              });
+              const media = document.querySelector("audio")!;
+              media.muted = true;
               const timeout = setTimeout(() => {
                 hls.destroy();
                 reject(new Error("hls.js timeout"));
@@ -264,7 +357,9 @@ test("real FFmpeg creates one aligned three-rendition plaintext ladder", async (
                   reject(new Error("missing levels"));
                   return;
                 }
-                hls.currentLevel = 0;
+                hls.startLevel = 0;
+                hls.startLoad();
+                void media.play();
               });
               let switched = false;
               hls.on(HlsConstructor.Events.FRAG_BUFFERED, () => {
@@ -273,13 +368,16 @@ test("real FFmpeg creates one aligned three-rendition plaintext ladder", async (
                   hls.nextLevel = 2;
                   return;
                 }
+              });
+              hls.on(HlsConstructor.Events.LEVEL_SWITCHED, (_event, data) => {
+                if (!switched || data.level !== 2) return;
                 clearTimeout(timeout);
                 const count = hls.levels.length;
                 hls.destroy();
                 resolve(count);
               });
               hls.loadSource(masterUrl);
-              hls.attachMedia(document.querySelector("audio")!);
+              hls.attachMedia(media);
             }),
           `http://127.0.0.1:${address.port}/master.m3u8`,
         );
@@ -296,6 +394,112 @@ test("real FFmpeg creates one aligned three-rendition plaintext ladder", async (
     );
     for (const key of keys.values()) key.fill(0);
   }
+  for (const identifier of [
+    "key.seal",
+    index.renditions[0]!.init.identifier,
+    index.renditions[0]!.segments[0]!.identifier,
+  ]) {
+    const path = join(artifact.rootPath, identifier);
+    const original = await readFile(path);
+    const tampered = Buffer.from(original);
+    tampered[0] = (tampered[0] ?? 0) ^ 0xff;
+    await writeFile(path, tampered);
+    await expect(
+      Effect.runPromise(
+        Effect.gen(function* () {
+          const transcoder = yield* Transcoder;
+          return yield* transcoder.verify(artifact);
+        }).pipe(Effect.provide(TranscoderNodeLive)),
+      ),
+    ).rejects.toBeDefined();
+    await writeFile(path, original);
+  }
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const transcoder = yield* Transcoder;
+      yield* transcoder.cleanupPrepared(prepared);
+    }).pipe(Effect.provide(TranscoderNodeLive)),
+  );
+  expect(await Bun.file(prepared.rootPath).exists()).toBe(false);
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const transcoder = yield* Transcoder;
+      yield* transcoder.cleanupPrepared(prepared);
+    }).pipe(Effect.provide(TranscoderNodeLive)),
+  );
+  expect(
+    JSON.parse(await Bun.file(join(workspacePath, "workspace.json")).text()),
+  ).toEqual({
+    schema: "miso.transcoder-workspace/1",
+    generationDigest: artifact.generationDigest,
+  });
   if (process.env["MISO_PINNED_FFMPEG"] === "1")
     expect(prepared.toolchain.ffmpegVersion).toContain("8.1.2");
+}, 120_000);
+
+test("real FFmpeg preserves a 44.1 kHz stereo exact-target fixture", async () => {
+  if (process.platform === "win32") return;
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), "misofm-transcoder-44100-")),
+  );
+  roots.push(root);
+  const inputPath = join(root, "exact-six-seconds.wav");
+  const workspacePath = join(root, "workspace");
+  await writeFile(inputPath, wav(44_100, 2, 6), { mode: 0o600 });
+  const ffmpegPath =
+    process.env["MISO_FFMPEG"] ??
+    (process.platform === "darwin"
+      ? "/opt/homebrew/bin/ffmpeg"
+      : "/usr/bin/ffmpeg");
+  const ffprobePath =
+    process.env["MISO_FFPROBE"] ??
+    (process.platform === "darwin"
+      ? "/opt/homebrew/bin/ffprobe"
+      : "/usr/bin/ffprobe");
+  const prepared = await Effect.runPromise(
+    Effect.gen(function* () {
+      const transcoder = yield* Transcoder;
+      return yield* transcoder.prepare({
+        inputPath,
+        workspacePath,
+        ffmpegPath,
+        ffprobePath,
+      });
+    }).pipe(Effect.provide(TranscoderNodeLive)),
+  );
+  expect(prepared.sampleRateHz).toBe(44_100);
+  const timelines = await Promise.all(
+    ["aac-096", "aac-160", "aac-256"].map(async (id) =>
+      parsePlaintextMediaPlaylist(
+        await Bun.file(join(prepared.rootPath, `${id}.m3u8`)).bytes(),
+      ).segments.map((segment) => segment.durationMs),
+    ),
+  );
+  expect(timelines[1]).toEqual(timelines[0]);
+  expect(timelines[2]).toEqual(timelines[0]);
+  const firstSegment = join(prepared.rootPath, "aac-096-00000.m4s");
+  const originalSegment = await readFile(firstSegment);
+  const tamperedSegment = Buffer.from(originalSegment);
+  tamperedSegment[0] = (tamperedSegment[0] ?? 0) ^ 0xff;
+  await writeFile(firstSegment, tamperedSegment);
+  await expect(
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const transcoder = yield* Transcoder;
+        return yield* transcoder.prepare({
+          inputPath,
+          workspacePath,
+          ffmpegPath,
+          ffprobePath,
+        });
+      }).pipe(Effect.provide(TranscoderNodeLive)),
+    ),
+  ).rejects.toBeDefined();
+  await writeFile(firstSegment, originalSegment);
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const transcoder = yield* Transcoder;
+      yield* transcoder.cleanupPrepared(prepared);
+    }).pipe(Effect.provide(TranscoderNodeLive)),
+  );
 }, 120_000);

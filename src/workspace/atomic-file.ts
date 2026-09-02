@@ -119,6 +119,11 @@ const syncParent = async (path: string): Promise<void> => {
 export const atomicWriteFilePromise = async (
   path: string,
   bytes: Uint8Array | string,
+  hooks: {
+    readonly afterTransition?: (
+      transition: "file-fsync" | "rename" | "parent-fsync",
+    ) => void | Promise<void>;
+  } = {},
 ): Promise<void> => {
   if (!isAbsolute(path)) throw invalidPath(path);
   await assertNoSymlinkComponentsPromise(dirname(path));
@@ -147,10 +152,13 @@ export const atomicWriteFilePromise = async (
     handle = await open(temporaryPath, "wx", 0o600);
     await handle.writeFile(bytes);
     await handle.sync();
+    await hooks.afterTransition?.("file-fsync");
     await handle.close();
     handle = undefined;
     await rename(temporaryPath, path);
+    await hooks.afterTransition?.("rename");
     await syncParent(path);
+    await hooks.afterTransition?.("parent-fsync");
   } catch (error) {
     if (handle !== undefined) await handle.close().catch(() => undefined);
     await unlink(temporaryPath).catch(() => undefined);

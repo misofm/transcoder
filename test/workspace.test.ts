@@ -20,6 +20,7 @@ import {
 import {
   assertRegularFilePromise,
   atomicWriteFile,
+  atomicWriteFilePromise,
 } from "../src/workspace/atomic-file.js";
 import {
   acquireWorkspaceLockPromise,
@@ -27,7 +28,9 @@ import {
 } from "../src/workspace/lock.js";
 import {
   initializeWorkspacePromise,
+  cleanupWorkspaceTemporaries,
   parseWorkspaceState,
+  promoteWorkspaceDirectory,
   WORKSPACE_SCHEMA,
 } from "../src/workspace/state.js";
 
@@ -61,6 +64,78 @@ test("atomically replaces a durable mode-0600 file without temp leakage", async 
   expect(await readFile(path, "utf8")).toBe("second\n");
   expect((await lstat(path)).mode & 0o777).toBe(0o600);
   expect(Array.from(new Bun.Glob(".*.tmp-*").scanSync(workspace))).toEqual([]);
+});
+
+test("removes only abandoned crash staging names", async () => {
+  const root = await temporaryDirectory();
+  const workspace = join(root, "workspace");
+  await initializeWorkspacePromise(workspace);
+  await mkdir(join(workspace, ".tmp-123-deadbeef"));
+  await mkdir(join(workspace, "generations", ".tmp-456-cafebabe"));
+  await Bun.write(join(workspace, ".workspace.json.tmp-123-deadbeef"), "x");
+  await Bun.write(
+    join(workspace, "generations", `${"a".repeat(64)}.json.tmp-7-feedface`),
+    "x",
+  );
+  await Bun.write(join(workspace, "keep.txt"), "keep");
+  await Effect.runPromise(cleanupWorkspaceTemporaries(workspace));
+  expect(await Bun.file(join(workspace, "keep.txt")).text()).toBe("keep");
+  expect(await Bun.file(join(workspace, ".tmp-123-deadbeef")).exists()).toBe(
+    false,
+  );
+  expect(
+    await Bun.file(
+      join(workspace, "generations", ".tmp-456-cafebabe"),
+    ).exists(),
+  ).toBe(false);
+  expect(
+    await Bun.file(
+      join(workspace, "generations", `${"a".repeat(64)}.json.tmp-7-feedface`),
+    ).exists(),
+  ).toBe(false);
+});
+
+test("faults after every atomic-file transition leave old or complete new bytes", async () => {
+  for (const transition of ["file-fsync", "rename", "parent-fsync"] as const) {
+    const root = await temporaryDirectory();
+    const workspace = join(root, "workspace");
+    await initializeWorkspacePromise(workspace);
+    const path = join(workspace, "workspace.json");
+    await atomicWriteFilePromise(path, "old\n");
+    await expect(
+      atomicWriteFilePromise(path, "new\n", {
+        afterTransition: (current) => {
+          if (current === transition) throw new Error("injected crash");
+        },
+      }),
+    ).rejects.toBeInstanceOf(WorkspaceIoError);
+    expect(["old\n", "new\n"]).toContain(await readFile(path, "utf8"));
+    expect(Array.from(new Bun.Glob(".*.tmp-*").scanSync(workspace))).toEqual(
+      [],
+    );
+    await atomicWriteFilePromise(path, "resumed\n");
+    expect(await readFile(path, "utf8")).toBe("resumed\n");
+  }
+});
+
+test("faults after directory promotion leave a complete resumable destination", async () => {
+  for (const transition of ["rename", "parent-fsync"] as const) {
+    const root = await temporaryDirectory();
+    const temporary = join(root, "temporary");
+    const destination = join(root, "destination");
+    await mkdir(temporary, { mode: 0o700 });
+    await Bun.write(join(temporary, "complete"), "bytes");
+    await expect(
+      Effect.runPromise(
+        promoteWorkspaceDirectory(temporary, destination, {
+          afterTransition: (current) => {
+            if (current === transition) throw new Error("injected crash");
+          },
+        }),
+      ),
+    ).rejects.toBeInstanceOf(WorkspaceIoError);
+    expect(await readFile(join(destination, "complete"), "utf8")).toBe("bytes");
+  }
 });
 
 test("exclusive lock rejects contention and release is ownership checked", async () => {
@@ -103,6 +178,30 @@ test("stale recovery requires explicit old same-host dead-pid proof", async () =
     isPidAlive: () => false,
   });
   await releaseWorkspaceLockPromise(recovered);
+});
+
+test("only one concurrent stale-lock recovery claimant succeeds", async () => {
+  const root = await temporaryDirectory();
+  const workspace = join(root, "workspace");
+  await initializeWorkspacePromise(workspace);
+  await acquireWorkspaceLockPromise(workspace, "prepare", {
+    now: new Date("2026-01-01T00:00:00.000Z"),
+    host: "host-a",
+    pid: 123,
+  });
+  const recover = () =>
+    acquireWorkspaceLockPromise(workspace, "finalize", {
+      recoverStaleLock: true,
+      now: new Date("2026-01-01T01:00:00.000Z"),
+      host: "host-a",
+      isPidAlive: () => false,
+    });
+  const results = await Promise.allSettled([recover(), recover()]);
+  const locks = results.flatMap((result) =>
+    result.status === "fulfilled" ? [result.value] : [],
+  );
+  expect(locks).toHaveLength(1);
+  await releaseWorkspaceLockPromise(locks[0]!);
 });
 
 test("rejects symlinked workspace and output components", async () => {
