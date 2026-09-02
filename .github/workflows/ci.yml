@@ -27,7 +27,7 @@ jobs:
       - run: bun run format:check
       - run: bun run lint
       - run: bun run typecheck
-      - run: bun test
+      - run: bun run test:unit
       - run: bun run build
       - run: npm pack --dry-run
       - run: git diff --check
@@ -70,6 +70,8 @@ jobs:
         with:
           bun-version: 1.4.0
       - run: bun install --frozen-lockfile
+      - run: sudo apt-get update
+      - run: sudo apt-get install --yes ffmpeg
       - run: bunx playwright install --with-deps chromium
       - name: Structural conformance with runner FFmpeg
         env:

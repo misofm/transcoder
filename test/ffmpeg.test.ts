@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { Effect } from "effect";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
@@ -15,6 +16,8 @@ import { buildLadderInvocation } from "../src/ffmpeg/invocation.js";
 import { parseSourceProbe, sourceProbeArgs } from "../src/ffmpeg/probe.js";
 import { validatePlaintextRendition } from "../src/ffmpeg/validate-media.js";
 import type { NativeProcessService } from "../src/process/native-process.js";
+
+const temporaryRoot = realpath(tmpdir());
 
 const version = (
   product: "ffmpeg" | "ffprobe",
@@ -218,7 +221,7 @@ test.each([
   ["clipping", 1.01],
   ["non-finite", Number.NaN],
 ] as const)("rejects %s decoded PCM", async (_name, sample) => {
-  const root = await mkdtemp(join("/private/tmp", "transcoder-pcm-"));
+  const root = await mkdtemp(join(await temporaryRoot, "transcoder-pcm-"));
   const playlistPath = join(root, "aac-096.m3u8");
   await writeFile(
     playlistPath,

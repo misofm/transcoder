@@ -5,9 +5,11 @@ import {
   mkdtemp,
   mkdir,
   readFile,
+  realpath,
   rm,
   symlink,
 } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { Effect } from "effect";
@@ -35,10 +37,11 @@ import {
 } from "../src/workspace/state.js";
 
 const temporaryDirectories: Array<string> = [];
+const temporaryRoot = realpath(tmpdir());
 
 const temporaryDirectory = async (): Promise<string> => {
   const path = await mkdtemp(
-    join("/private/tmp", "transcoder-workspace-test-"),
+    join(await temporaryRoot, "transcoder-workspace-test-"),
   );
   temporaryDirectories.push(path);
   return path;

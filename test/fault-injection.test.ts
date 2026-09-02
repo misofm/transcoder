@@ -1,5 +1,14 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdtemp, mkdir, open, readdir, rm, writeFile } from "node:fs/promises";
+import {
+  mkdtemp,
+  mkdir,
+  open,
+  readdir,
+  realpath,
+  rm,
+  writeFile,
+} from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { Effect, Fiber } from "effect";
@@ -17,6 +26,7 @@ import {
 } from "../src/workspace/lock.js";
 
 const roots: string[] = [];
+const temporaryRoot = realpath(tmpdir());
 afterEach(async () =>
   Promise.all(
     roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
@@ -24,7 +34,9 @@ afterEach(async () =>
 );
 
 test("failed finalization zeroes the owned key and cannot promote partial output", async () => {
-  const workspace = await mkdtemp(join("/private/tmp", "transcoder-fault-"));
+  const workspace = await mkdtemp(
+    join(await temporaryRoot, "transcoder-fault-"),
+  );
   roots.push(workspace);
   const rootPath = join(workspace, "plaintext", "a".repeat(64));
   await mkdir(rootPath, { recursive: true, mode: 0o700 });
@@ -74,7 +86,7 @@ test("failed finalization zeroes the owned key and cannot promote partial output
 test("segment encryption faults after every durable transition", async () => {
   for (const transition of ["file-fsync", "rename", "parent-fsync"] as const) {
     const root = await mkdtemp(
-      join("/private/tmp", "transcoder-segment-fault-"),
+      join(await temporaryRoot, "transcoder-segment-fault-"),
     );
     roots.push(root);
     const plaintext = join(root, "plain.m4s");
@@ -111,7 +123,9 @@ test("segment encryption faults after every durable transition", async () => {
 });
 
 test("interrupted encryption joins cleanup before scope completion", async () => {
-  const workspace = await mkdtemp(join("/private/tmp", "transcoder-cancel-"));
+  const workspace = await mkdtemp(
+    join(await temporaryRoot, "transcoder-cancel-"),
+  );
   roots.push(workspace);
   const digest = "d".repeat(64);
   const rootPath = join(workspace, "plaintext", digest);
