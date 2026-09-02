@@ -1,0 +1,180 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://miso.fm/schemas/aac-transcode-quilt-v1.schema.json",
+  "title": "Miso AAC transcode Quilt v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "network",
+    "recordingId",
+    "generation",
+    "masterPlaylist",
+    "key",
+    "segmentTargetMs",
+    "patchCount",
+    "encryption",
+    "renditions"
+  ],
+  "properties": {
+    "schema": { "const": "miso.aac-transcode-quilt/1" },
+    "network": { "enum": ["testnet", "mainnet"] },
+    "recordingId": { "$ref": "#/$defs/objectId" },
+    "generation": {
+      "description": "Canonical unpadded base64url encoding of a 32-byte nonce.",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{43}$"
+    },
+    "masterPlaylist": { "const": "master.m3u8" },
+    "key": {
+      "allOf": [
+        { "$ref": "#/$defs/file" },
+        {
+          "type": "object",
+          "properties": {
+            "identifier": { "const": "key.seal" }
+          }
+        }
+      ]
+    },
+    "segmentTargetMs": {
+      "type": "integer",
+      "minimum": 1000,
+      "maximum": 10000
+    },
+    "patchCount": {
+      "type": "integer",
+      "minimum": 6,
+      "maximum": 666
+    },
+    "encryption": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scheme", "kdf", "sealPlaintextBytes"],
+      "properties": {
+        "scheme": { "const": "hls-aes-128-cbc-hkdf/1" },
+        "kdf": { "const": "hkdf-sha256" },
+        "sealPlaintextBytes": { "const": 32 }
+      }
+    },
+    "renditions": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 4,
+      "items": { "$ref": "#/$defs/rendition" }
+    }
+  },
+  "$defs": {
+    "objectId": {
+      "type": "string",
+      "pattern": "^0x[0-9a-f]{64}$"
+    },
+    "identifier": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "file": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["identifier", "bytes", "sha256"],
+      "properties": {
+        "identifier": { "$ref": "#/$defs/identifier" },
+        "bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "segment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sequence",
+        "identifier",
+        "durationMs",
+        "plainBytes",
+        "cipherBytes",
+        "ciphertextSha256"
+      ],
+      "properties": {
+        "sequence": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "identifier": { "$ref": "#/$defs/identifier" },
+        "durationMs": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10000
+        },
+        "plainBytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "cipherBytes": {
+          "type": "integer",
+          "minimum": 16,
+          "maximum": 9007199254740991,
+          "multipleOf": 16
+        },
+        "ciphertextSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "rendition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "codec",
+        "nominalBitrate",
+        "averageBandwidth",
+        "peakBandwidth",
+        "sampleRateHz",
+        "channels",
+        "playlist",
+        "init",
+        "segments"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^aac-[0-9]{3}$"
+        },
+        "codec": { "const": "mp4a.40.2" },
+        "nominalBitrate": {
+          "type": "integer",
+          "minimum": 32000,
+          "maximum": 512000
+        },
+        "averageBandwidth": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000000
+        },
+        "peakBandwidth": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000000
+        },
+        "sampleRateHz": { "enum": [44100, 48000] },
+        "channels": { "const": 2 },
+        "playlist": { "$ref": "#/$defs/identifier" },
+        "init": { "$ref": "#/$defs/file" },
+        "segments": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 660,
+          "items": { "$ref": "#/$defs/segment" }
+        }
+      }
+    }
+  }
+}
