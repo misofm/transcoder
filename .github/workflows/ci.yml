@@ -83,4 +83,9 @@ jobs:
           MISO_HLS_SMOKE: "1"
           MISO_CHROMIUM_PATH: /opt/google/chrome/chrome
         run: bun test test/ffmpeg-integration.test.ts
-      - run: git diff -- test/fixtures/linuxserver-ffmpeg-8.1.2.golden.json
+      - name: Upload generated golden
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: linuxserver-ffmpeg-8.1.2-golden
+          path: test/fixtures/linuxserver-ffmpeg-8.1.2.golden.json
+          retention-days: 1
