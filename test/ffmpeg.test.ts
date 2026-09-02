@@ -1,4 +1,7 @@
 import { expect, test } from "bun:test";
+import { Effect } from "effect";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 
 import {
   ToolchainCapabilityError,
@@ -10,11 +13,15 @@ import {
 } from "../src/ffmpeg/capabilities.js";
 import { buildLadderInvocation } from "../src/ffmpeg/invocation.js";
 import { parseSourceProbe, sourceProbeArgs } from "../src/ffmpeg/probe.js";
+import { validatePlaintextRendition } from "../src/ffmpeg/validate-media.js";
+import type { NativeProcessService } from "../src/process/native-process.js";
 
 const version = (
   product: "ffmpeg" | "ffprobe",
   token = "8.1.2-static",
 ) => `${product} version ${token} Copyright
+built with gcc 15.1.0
+configuration: --enable-gpl --enable-libopus
 libavcodec     62. 11.100 / 62. 11.100
 libavformat    62.  3.100 / 62.  3.100
 `;
@@ -52,6 +59,18 @@ test("rejects mismatched ffmpeg and ffprobe builds", () => {
     parseToolchainFingerprint("/opt/ffmpeg", "/opt/ffprobe", {
       ...capabilityOutputs,
       ffprobeVersion: version("ffprobe", "8.1.1-static"),
+    }),
+  ).toThrow(ToolchainCapabilityError);
+});
+
+test("rejects mismatched ffmpeg and ffprobe configurations", () => {
+  expect(() =>
+    parseToolchainFingerprint("/opt/ffmpeg", "/opt/ffprobe", {
+      ...capabilityOutputs,
+      ffprobeVersion: version("ffprobe").replace(
+        "--enable-libopus",
+        "--disable-libopus",
+      ),
     }),
   ).toThrow(ToolchainCapabilityError);
 });
@@ -193,4 +212,76 @@ test("parses a supported mono source and rejects ambiguous or surround audio", (
       }),
     ),
   ).toThrow(UnsupportedSourceError);
+});
+
+test.each([
+  ["clipping", 1.01],
+  ["non-finite", Number.NaN],
+] as const)("rejects %s decoded PCM", async (_name, sample) => {
+  const root = await mkdtemp(join("/private/tmp", "transcoder-pcm-"));
+  const playlistPath = join(root, "aac-096.m3u8");
+  await writeFile(
+    playlistPath,
+    '#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:1\n#EXT-X-PLAYLIST-TYPE:VOD\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-MAP:URI="aac-096-init.mp4"\n#EXTINF:1.000,\naac-096-00000.m4s\n#EXT-X-ENDLIST\n',
+  );
+  const timeline = new TextEncoder().encode(
+    JSON.stringify({
+      streams: [
+        {
+          codec_name: "aac",
+          profile: "LC",
+          codec_tag_string: "mp4a",
+          sample_rate: "48000",
+          channels: 2,
+          time_base: "1/48000",
+        },
+      ],
+      packets: [
+        {
+          pts: 0,
+          dts: 0,
+          duration: 48000,
+          pts_time: "0.000000",
+          duration_time: "1.000000",
+        },
+      ],
+    }),
+  );
+  const process: NativeProcessService = {
+    run: (request) => {
+      if (request.role === "ffmpeg-clipping-scan") {
+        const chunk = Buffer.alloc(4);
+        chunk.writeFloatLE(sample);
+        request.onStdoutChunk?.(chunk);
+      }
+      return Effect.succeed({
+        exitCode: 0,
+        signal: null,
+        stdout:
+          request.role === "ffprobe-timeline" ? timeline : new Uint8Array(),
+        stderrTail: new Uint8Array(),
+        progressTail: new Uint8Array(),
+        stderrTruncated: false,
+        progressTruncated: false,
+      });
+    },
+  };
+  try {
+    await expect(
+      Effect.runPromise(
+        validatePlaintextRendition(
+          process,
+          "/ffmpeg",
+          "/ffprobe",
+          playlistPath,
+          48_000,
+          1_000,
+        ),
+      ),
+    ).rejects.toMatchObject({
+      message: "Decoded audio contains clipping or non-finite samples",
+    });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });

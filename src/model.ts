@@ -41,7 +41,10 @@ export interface ToolchainFingerprint {
   readonly ffmpegPath: string;
   readonly ffprobePath: string;
   readonly ffmpegVersion: string;
+  readonly ffmpegBuild: string;
   readonly ffprobeVersion: string;
+  readonly ffprobeBuild: string;
+  readonly configuration: string;
   readonly libavcodecVersion: string;
   readonly libavformatVersion: string;
   readonly capabilities: readonly string[];

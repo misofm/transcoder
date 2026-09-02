@@ -54,33 +54,57 @@ export const parsePlaintextMediaPlaylist = (
   let version: number | undefined;
   let targetDuration: number | undefined;
   let mediaSequence: number | undefined;
+  let playlistType = false;
   let mapIdentifier: string | undefined;
   let endlist = false;
   let pendingDurationMs: number | undefined;
   const segments: MediaSegment[] = [];
 
   for (const line of lines) {
-    if (line.startsWith("#EXT-X-VERSION:")) version = Number(line.slice(15));
-    else if (line.startsWith("#EXT-X-TARGETDURATION:"))
+    if (endlist && line !== "")
+      throw new TypeError("ENDLIST must be the final playlist line");
+    if (line === "#EXTM3U") continue;
+    if (line.startsWith("#EXT-X-VERSION:")) {
+      if (version !== undefined) throw new TypeError("duplicate HLS version");
+      version = Number(line.slice(15));
+    } else if (line.startsWith("#EXT-X-TARGETDURATION:")) {
+      if (targetDuration !== undefined)
+        throw new TypeError("duplicate target duration");
       targetDuration = Number(line.slice(22));
-    else if (line.startsWith("#EXT-X-MEDIA-SEQUENCE:"))
+    } else if (line === "#EXT-X-PLAYLIST-TYPE:VOD") {
+      if (playlistType) throw new TypeError("duplicate playlist type");
+      playlistType = true;
+    } else if (line.startsWith("#EXT-X-PLAYLIST-TYPE:")) {
+      throw new TypeError("playlist type must be VOD");
+    } else if (line.startsWith("#EXT-X-MEDIA-SEQUENCE:")) {
+      if (mediaSequence !== undefined)
+        throw new TypeError("duplicate media sequence");
       mediaSequence = Number(line.slice(22));
-    else if (line.startsWith("#EXT-X-MAP:")) {
+    } else if (line.startsWith("#EXT-X-MAP:")) {
       if (mapIdentifier !== undefined)
         throw new TypeError("playlist must contain exactly one map");
+      if (segments.length > 0 || pendingDurationMs !== undefined)
+        throw new TypeError("map must precede all media");
+      if (!/^#EXT-X-MAP:URI="[^"]+"$/u.test(line))
+        throw new TypeError("map must contain only a quoted URI");
       mapIdentifier = parseQuotedUri(line);
       if (mapIdentifier === undefined)
         throw new TypeError("map URI must be quoted");
       assertSafeIdentifier(mapIdentifier);
     } else if (line.startsWith("#EXTINF:")) {
+      if (mapIdentifier === undefined)
+        throw new TypeError("map must precede all media");
       if (pendingDurationMs !== undefined)
         throw new TypeError("EXTINF has no media URI");
       const seconds = Number(line.slice(8).split(",", 1)[0]);
       if (!Number.isFinite(seconds) || seconds <= 0)
         throw new TypeError("invalid EXTINF duration");
       pendingDurationMs = Math.round(seconds * 1_000);
-    } else if (line === "#EXT-X-ENDLIST") endlist = true;
-    else if (
+    } else if (line === "#EXT-X-ENDLIST") {
+      if (pendingDurationMs !== undefined)
+        throw new TypeError("ENDLIST cannot interrupt a segment");
+      endlist = true;
+    } else if (
       line.startsWith("#EXT-X-KEY:") ||
       line.startsWith("#EXT-X-BYTERANGE:") ||
       line === "#EXT-X-DISCONTINUITY"
@@ -88,7 +112,9 @@ export const parsePlaintextMediaPlaylist = (
       throw new TypeError(
         `forbidden plaintext playlist tag: ${line.split(":", 1)[0]}`,
       );
-    } else if (line !== "" && !line.startsWith("#")) {
+    } else if (line !== "" && line.startsWith("#")) {
+      throw new TypeError(`unsupported playlist tag: ${line.split(":", 1)[0]}`);
+    } else if (line !== "") {
       if (pendingDurationMs === undefined)
         throw new TypeError("media URI has no EXTINF");
       assertSafeIdentifier(line);
@@ -112,11 +138,17 @@ export const parsePlaintextMediaPlaylist = (
     throw new TypeError("invalid target duration");
   }
   if (mediaSequence !== 0) throw new TypeError("media sequence must be zero");
+  if (!playlistType) throw new TypeError("VOD playlist type is required");
   if (mapIdentifier === undefined)
     throw new TypeError("playlist map is required");
   if (!endlist) throw new TypeError("VOD playlist must end with ENDLIST");
   if (pendingDurationMs !== undefined || segments.length === 0)
     throw new TypeError("incomplete media playlist");
+  const derivedTarget = Math.max(
+    ...segments.map((segment) => Math.round(segment.durationMs / 1_000)),
+  );
+  if (targetDuration !== derivedTarget)
+    throw new TypeError("target duration does not match media durations");
   const identifiers = new Set(segments.map((segment) => segment.identifier));
   if (identifiers.size !== segments.length)
     throw new TypeError("segment identifiers must be unique");

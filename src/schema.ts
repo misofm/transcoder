@@ -238,6 +238,13 @@ export const assertQuiltIndex: (
     index.renditions.length !== RENDITIONS.length
   )
     throw new TypeError("index does not satisfy the AAC Quilt v1 schema");
+  const generationBytes = Buffer.from(index.generation as string, "base64url");
+  if (
+    generationBytes.byteLength !== 32 ||
+    generationBytes.toString("base64url") !== index.generation
+  ) {
+    throw new TypeError("generation nonce is not canonical base64url");
+  }
   index.renditions.forEach((rendition, position) => {
     const expected = RENDITIONS[position];
     if (expected === undefined || !validateRendition(rendition, expected))
@@ -254,6 +261,13 @@ export const assertQuiltIndex: (
   const validatedRenditions =
     index.renditions as readonly RenditionDescriptor[];
   if (
+    !validatedRenditions.every(
+      (rendition) =>
+        rendition.sampleRateHz === validatedRenditions[0]?.sampleRateHz,
+    )
+  )
+    throw new TypeError("rendition sample rates differ");
+  if (
     !validatedRenditions.every((rendition) => {
       const measured = calculateBandwidth(rendition.segments);
       return (
@@ -269,6 +283,17 @@ export const assertQuiltIndex: (
     );
     if (!durations.every((duration) => duration === durations[0]))
       throw new TypeError("rendition timelines differ");
+    if (
+      sequence < (lengths[0] ?? 0) - 1 &&
+      Math.abs((durations[0] ?? 0) - (index.segmentTargetMs as number)) >
+        Math.ceil(
+          (1_024 * 1_000) /
+            (validatedRenditions[0]?.sampleRateHz ?? Number.NaN),
+        )
+    )
+      throw new TypeError(
+        "non-final segment is outside one AAC frame of target",
+      );
   }
   const allIdentifiers = [
     "index.json",

@@ -80,6 +80,29 @@ test("rejects unknown keys and cross-field mismatches", () => {
   expect(() =>
     assertQuiltIndex({ ...index, recordingId: `0x${"AA".repeat(32)}` }),
   ).toThrow();
+  expect(() =>
+    assertQuiltIndex({
+      ...index,
+      renditions: renditions.map((rendition, position) =>
+        position === 1 ? { ...rendition, sampleRateHz: 44_100 } : rendition,
+      ),
+    }),
+  ).toThrow();
+  const twoSegments = renditions.map((rendition) => ({
+    ...rendition,
+    segments: [
+      { ...rendition.segments[0]!, durationMs: 5_900 },
+      {
+        ...rendition.segments[0]!,
+        sequence: 1,
+        identifier: `${rendition.id}-00001.m4s`,
+        durationMs: 100,
+      },
+    ],
+  }));
+  expect(() =>
+    assertQuiltIndex({ ...index, patchCount: 15, renditions: twoSegments }),
+  ).toThrow();
   const duplicate = new TextEncoder().encode(
     new TextDecoder()
       .decode(canonicalIndexBytes(index))

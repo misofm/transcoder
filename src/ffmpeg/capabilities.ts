@@ -58,6 +58,18 @@ const firstNonemptyLine = (value: string): string | undefined =>
     .map((line) => line.trimEnd())
     .find((line) => line.trim().length > 0);
 
+const firstBuildLine = (value: string): string | undefined =>
+  value
+    .split(/\r?\n/u)
+    .map((line) => line.trimEnd())
+    .find((line) => /^built with\s/u.test(line));
+
+const configurationLine = (value: string): string | undefined =>
+  value
+    .split(/\r?\n/u)
+    .map((line) => line.trimEnd())
+    .find((line) => /^configuration:/u.test(line));
+
 const versionToken = (
   line: string,
   product: "ffmpeg" | "ffprobe",
@@ -94,6 +106,10 @@ export const parseToolchainFingerprint = (
 ): ToolchainFingerprint => {
   const ffmpegVersion = firstNonemptyLine(outputs.ffmpegVersion);
   const ffprobeVersion = firstNonemptyLine(outputs.ffprobeVersion);
+  const ffmpegBuild = firstBuildLine(outputs.ffmpegVersion);
+  const ffprobeBuild = firstBuildLine(outputs.ffprobeVersion);
+  const ffmpegConfiguration = configurationLine(outputs.ffmpegVersion);
+  const ffprobeConfiguration = configurationLine(outputs.ffprobeVersion);
   if (
     ffmpegVersion === undefined ||
     versionToken(ffmpegVersion, "ffmpeg") === undefined
@@ -121,6 +137,19 @@ export const parseToolchainFingerprint = (
       "FFmpeg and FFprobe build versions do not match",
     );
   }
+  if (
+    ffmpegBuild === undefined ||
+    ffprobeBuild === undefined ||
+    ffmpegBuild !== ffprobeBuild ||
+    ffmpegConfiguration === undefined ||
+    ffprobeConfiguration === undefined ||
+    ffmpegConfiguration !== ffprobeConfiguration
+  ) {
+    throw capabilityError(
+      "toolchain",
+      "FFmpeg and FFprobe did not report complete build lines",
+    );
+  }
 
   const libavcodecVersion = libraryVersion(outputs.ffmpegVersion, "libavcodec");
   const libavformatVersion = libraryVersion(
@@ -133,6 +162,15 @@ export const parseToolchainFingerprint = (
       "FFmpeg did not report required library versions",
     );
   }
+  if (
+    libraryVersion(outputs.ffprobeVersion, "libavcodec") !==
+      libavcodecVersion ||
+    libraryVersion(outputs.ffprobeVersion, "libavformat") !== libavformatVersion
+  )
+    throw capabilityError(
+      "toolchain",
+      "FFmpeg and FFprobe library versions do not match",
+    );
   if (!/^\s*A\S*\s+aac\s/imu.test(outputs.encoders)) {
     throw capabilityError("ffmpeg", "FFmpeg native AAC encoder is unavailable");
   }
@@ -172,7 +210,10 @@ export const parseToolchainFingerprint = (
     ffmpegPath,
     ffprobePath,
     ffmpegVersion,
+    ffmpegBuild,
     ffprobeVersion,
+    ffprobeBuild,
+    configuration: ffmpegConfiguration,
     libavcodecVersion,
     libavformatVersion,
     capabilities: TOOLCHAIN_CAPABILITIES,
