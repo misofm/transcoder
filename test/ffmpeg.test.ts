@@ -228,7 +228,7 @@ test("parses a supported mono source and rejects ambiguous or surround audio", (
 test.each([
   ["clipping", 1.01],
   ["non-finite", Number.NaN],
-] as const)("rejects %s decoded PCM", async (_name, sample) => {
+] as const)("rejects %s decoded PCM", async (name, sample) => {
   const root = await mkdtemp(join(await temporaryRoot, "transcoder-pcm-"));
   const playlistPath = join(root, "aac-096.m3u8");
   await writeFile(
@@ -253,7 +253,7 @@ test.each([
         {
           pts: 0,
           dts: 0,
-          duration: 48000,
+          ...(name === "clipping" ? { duration: 48000 } : {}),
           pos: 1,
           pts_time: "0.000000",
           duration_time: "1.000000",

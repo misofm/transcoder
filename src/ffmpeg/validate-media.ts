@@ -255,6 +255,26 @@ const parseInteger = (value: unknown): number | undefined => {
   return Number.isSafeInteger(parsed) ? parsed : undefined;
 };
 
+const parseRoundedSampleDuration = (
+  value: unknown,
+  sampleRateHz: 44_100 | 48_000,
+): number | undefined => {
+  if (
+    typeof value !== "string" ||
+    !/^(?:0|[1-9][0-9]*)\.[0-9]{6}$/u.test(value)
+  )
+    return undefined;
+  const samples = Number(value) * sampleRateHz;
+  const rounded = Math.round(samples);
+  // ffprobe renders packet times to six decimal places. At the supported
+  // sample rates that introduces at most 0.024 sample of rounding error.
+  return Number.isSafeInteger(rounded) &&
+    rounded > 0 &&
+    Math.abs(samples - rounded) <= 0.025
+    ? rounded
+    : undefined;
+};
+
 export const parseTimeline = (
   subject: string,
   bytes: Uint8Array,
@@ -312,7 +332,7 @@ export const parseTimeline = (
     const packet = packetValue as Record<string, unknown>;
     const pts = parseInteger(packet["pts"]);
     const dts = parseInteger(packet["dts"]);
-    const duration = parseInteger(packet["duration"]);
+    const reportedDuration = parseInteger(packet["duration"]);
     const pos = parseInteger(packet["pos"]);
     const ptsTime =
       typeof packet["pts_time"] === "string" ? packet["pts_time"] : undefined;
@@ -320,12 +340,24 @@ export const parseTimeline = (
       typeof packet["duration_time"] === "string"
         ? packet["duration_time"]
         : undefined;
+    const roundedDuration = parseRoundedSampleDuration(
+      durationTime,
+      sampleRateHz,
+    );
+    const duration = reportedDuration ?? roundedDuration;
     if (pts === undefined)
-      throw invalid(subject, "Packet integer presentation timestamp is missing");
+      throw invalid(
+        subject,
+        "Packet integer presentation timestamp is missing",
+      );
     if (dts === undefined)
       throw invalid(subject, "Packet integer decode timestamp is missing");
-    if (duration === undefined)
-      throw invalid(subject, "Packet integer duration is missing");
+    if (
+      duration === undefined ||
+      roundedDuration === undefined ||
+      (reportedDuration !== undefined && reportedDuration !== roundedDuration)
+    )
+      throw invalid(subject, "Packet duration is missing or inconsistent");
     if (pos === undefined || pos < 0)
       throw invalid(subject, "Packet byte position is missing or negative");
     if (duration <= 0)
