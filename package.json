@@ -1,10 +1,22 @@
 {
   "name": "@misofm/transcoder",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Effect-based deterministic encrypted AAC fMP4 HLS artifact builder.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/misofm/transcoder.git"
+  },
+  "homepage": "https://github.com/misofm/transcoder#readme",
+  "bugs": {
+    "url": "https://github.com/misofm/transcoder/issues"
+  },
   "type": "module",
   "license": "Apache-2.0",
   "sideEffects": false,
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "engines": {
     "node": ">=22 <25",
     "bun": ">=1.4.0"
