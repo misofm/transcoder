@@ -21,7 +21,7 @@ const temporaryRoot = realpath(tmpdir());
 
 const version = (
   product: "ffmpeg" | "ffprobe",
-  token = "8.1.2-static",
+  token = "8.1.2",
 ) => `${product} version ${token} Copyright
 built with gcc 15.1.0
 configuration: --enable-gpl --enable-libopus
@@ -51,7 +51,7 @@ test("parses and deterministically fingerprints the required toolchain capabilit
     capabilityOutputs,
   );
   expect(first).toEqual(second);
-  expect(first.ffmpegVersion).toBe("ffmpeg version 8.1.2-static Copyright");
+  expect(first.ffmpegVersion).toBe("ffmpeg version 8.1.2 Copyright");
   expect(first.libavcodecVersion).toBe("62. 11.100 / 62. 11.100");
   expect(first.capabilities).toEqual(TOOLCHAIN_CAPABILITIES);
   expect(first.sha256).toMatch(/^[0-9a-f]{64}$/);

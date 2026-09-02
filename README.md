@@ -37,4 +37,4 @@ bun run build
 npm pack --dry-run
 ```
 
-FFmpeg and FFprobe 8.1.2 are required and rejected if their versions, build lines, configurations, or libav versions do not match. CI structural, encrypted-playback, and byte-level golden conformance run only with the issue-pinned BtbN Linux x64 toolchain.
+FFmpeg and FFprobe 8.1.2 are required and rejected if their versions, build lines, configurations, or libav versions do not match. CI structural, encrypted-playback, and byte-level golden conformance run only in LinuxServer's `8.1.2-cli-ls76` image pinned by OCI digest.

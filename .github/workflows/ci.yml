@@ -61,6 +61,8 @@ jobs:
   pinned-ffmpeg:
     runs-on: ubuntu-24.04
     timeout-minutes: 25
+    container:
+      image: ghcr.io/linuxserver/ffmpeg:8.1.2-cli-ls76@sha256:2e7000921be8de2704a4f27dfd3d988562697a346eaabb937a81046c306f0af7
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -70,22 +72,10 @@ jobs:
           bun-version: 1.4.0
       - run: bun install --frozen-lockfile
       - run: bunx playwright install --with-deps chromium
-      - name: Require the immutable issue-pinned archive URL
-        env:
-          ARCHIVE_URL: ${{ vars.FFMPEG_812_BTBN_URL }}
-        run: test -n "$ARCHIVE_URL"
-      - name: Fetch immutable reference archive
-        env:
-          ARCHIVE_URL: ${{ vars.FFMPEG_812_BTBN_URL }}
-        run: curl --fail --location --proto '=https' --tlsv1.3 --output /tmp/ffmpeg.tar.xz "$ARCHIVE_URL"
-      - name: Verify reference archive
-        run: echo 'def57dbadfb868996ffae6e2b0c6f0ebce9b96a3069e8fa86f9e69e0fff78f59  /tmp/ffmpeg.tar.xz' | sha256sum --check --strict
-      - run: mkdir /tmp/ffmpeg-reference
-      - run: tar -xJf /tmp/ffmpeg.tar.xz -C /tmp/ffmpeg-reference --strip-components=1
       - name: Pinned structural and golden conformance
         env:
-          MISO_FFMPEG: /tmp/ffmpeg-reference/bin/ffmpeg
-          MISO_FFPROBE: /tmp/ffmpeg-reference/bin/ffprobe
+          MISO_FFMPEG: /usr/local/bin/ffmpeg
+          MISO_FFPROBE: /usr/local/bin/ffprobe
           MISO_PINNED_FFMPEG: "1"
           MISO_HLS_SMOKE: "1"
         run: bun test test/ffmpeg-integration.test.ts

@@ -3,6 +3,8 @@ import { readFile, readdir } from "node:fs/promises";
 import { join, relative } from "node:path";
 
 const pinnedEffectVersion = "4.0.0-rc.112";
+const pinnedFfmpegImage =
+  "ghcr.io/linuxserver/ffmpeg:8.1.2-cli-ls76@sha256:2e7000921be8de2704a4f27dfd3d988562697a346eaabb937a81046c306f0af7";
 
 const readJson = async (url: URL): Promise<Record<string, unknown>> =>
   JSON.parse(await readFile(url, "utf8")) as Record<string, unknown>;
@@ -29,6 +31,17 @@ test("Effect and platform-node share one exact peer/dev version", async () => {
   });
   expect(effectManifest.version).toBe(pinnedEffectVersion);
   expect(platformManifest.version).toBe(pinnedEffectVersion);
+});
+
+test("FFmpeg conformance uses one digest-pinned reference image", async () => {
+  const workflow = await readFile(
+    new URL("../.github/workflows/ci.yml", import.meta.url),
+    "utf8",
+  );
+  expect(workflow).toContain(`image: ${pinnedFfmpegImage}`);
+  expect(workflow).not.toMatch(
+    /FFMPEG_812_BTBN_URL|apt-get install --yes ffmpeg|:latest/u,
+  );
 });
 
 const sourceFiles = async (root: string): Promise<ReadonlyArray<string>> => {
