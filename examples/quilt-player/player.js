@@ -1,4 +1,4 @@
-const REQUIRED_RENDITIONS = ["aac-096", "aac-160", "aac-256"];
+const REQUIRED_RENDITIONS = ["aac-96", "aac-160", "aac-256"];
 
 const hex = (bytes) =>
   [...bytes].map((value) => value.toString(16).padStart(2, "0")).join("");

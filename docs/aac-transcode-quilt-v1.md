@@ -114,7 +114,7 @@ There are exactly three rendition descriptors. Each has `id`, `codec`, `nominalB
 ```json
 {
   "sequence": 0,
-  "identifier": "aac-096-00000.m4s",
+  "identifier": "aac-96-00000.m4s",
   "durationMs": 6000,
   "bytes": 72192,
   "sha256": "0000000000000000000000000000000000000000000000000000000000000000"

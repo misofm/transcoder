@@ -110,7 +110,7 @@ test("real FFmpeg creates one aligned three-rendition plaintext ladder", async (
   expect(prepared.audio.policyId).toBe("miso.aac-codec-preview/1");
   expect(prepared.audio.appliedGainCentiDb).toBe(0);
   expect(prepared.audio.output).toEqual(prepared.audio.preview);
-  for (const id of ["aac-096", "aac-160", "aac-256"] as const) {
+  for (const id of ["aac-96", "aac-160", "aac-256"] as const) {
     expect(await Bun.file(join(prepared.rootPath, `${id}.m3u8`)).exists()).toBe(
       true,
     );
@@ -514,7 +514,7 @@ test("real FFmpeg preserves a 44.1 kHz stereo exact-target fixture", async () =>
   );
   expect(prepared.sampleRateHz).toBe(44_100);
   const timelines = await Promise.all(
-    ["aac-096", "aac-160", "aac-256"].map(async (id) =>
+    ["aac-96", "aac-160", "aac-256"].map(async (id) =>
       parsePlaintextMediaPlaylist(
         await Bun.file(join(prepared.rootPath, `${id}.m3u8`)).bytes(),
       ).segments.map((segment) => segment.durationMs),
@@ -561,7 +561,7 @@ test("real FFmpeg preserves a 44.1 kHz stereo exact-target fixture", async () =>
     ),
   ).rejects.toBeDefined();
   await writeFile(preparedCheckpointPath, originalCheckpoint);
-  const firstSegment = join(prepared.rootPath, "aac-096-00000.m4s");
+  const firstSegment = join(prepared.rootPath, "aac-96-00000.m4s");
   const originalSegment = await readFile(firstSegment);
   const tamperedSegment = Buffer.from(originalSegment);
   tamperedSegment[0] = (tamperedSegment[0] ?? 0) ^ 0xff;

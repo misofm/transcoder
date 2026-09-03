@@ -33,14 +33,14 @@ const preparedAudio = {
       truePeakCentiDbtp: -200,
       samplePeakCentiDbfs: -200,
     },
-    preview: ["aac-096", "aac-160", "aac-256"].map((id) => ({
-      id: id as "aac-096" | "aac-160" | "aac-256",
+    preview: ["aac-96", "aac-160", "aac-256"].map((id) => ({
+      id: id as "aac-96" | "aac-160" | "aac-256",
       integratedLoudnessCentiLufs: -2400,
       truePeakCentiDbtp: -200,
       samplePeakCentiDbfs: -200,
     })),
-    output: ["aac-096", "aac-160", "aac-256"].map((id) => ({
-      id: id as "aac-096" | "aac-160" | "aac-256",
+    output: ["aac-96", "aac-160", "aac-256"].map((id) => ({
+      id: id as "aac-96" | "aac-160" | "aac-256",
       integratedLoudnessCentiLufs: -2400,
       truePeakCentiDbtp: -200,
       samplePeakCentiDbfs: -200,
@@ -155,7 +155,7 @@ test("interrupted copy joins cleanup before scope completion", async () => {
   const rootPath = join(workspace, "plaintext", digest);
   await mkdir(rootPath, { recursive: true, mode: 0o700 });
   await mkdir(join(workspace, "generations"), { mode: 0o700 });
-  for (const id of ["aac-096", "aac-160", "aac-256"] as const) {
+  for (const id of ["aac-96", "aac-160", "aac-256"] as const) {
     await writeFile(join(rootPath, `${id}-init.mp4`), "i");
     const segment = join(rootPath, `${id}-00000.m4s`);
     const handle = await open(segment, "w", 0o600);

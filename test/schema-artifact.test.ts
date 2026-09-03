@@ -50,9 +50,9 @@ test("serializes strict index and canonical patch ordering", () => {
   expect(canonicalIdentifiers(index)).toEqual([
     "index.json",
     "master.m3u8",
-    "aac-096.m3u8",
-    "aac-096-init.mp4",
-    "aac-096-00000.m4s",
+    "aac-96.m3u8",
+    "aac-96-init.mp4",
+    "aac-96-00000.m4s",
     "aac-160.m3u8",
     "aac-160-init.mp4",
     "aac-160-00000.m4s",

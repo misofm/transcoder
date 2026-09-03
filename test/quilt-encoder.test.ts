@@ -12,9 +12,9 @@ const fixture = [
     tags: quiltPatchTags("index.json"),
   },
   {
-    identifier: "aac-096-00000.m4s",
+    identifier: "aac-96-00000.m4s",
     contents: new Uint8Array([1, 2, 3]),
-    tags: quiltPatchTags("aac-096-00000.m4s"),
+    tags: quiltPatchTags("aac-96-00000.m4s"),
   },
 ] as const;
 
@@ -26,14 +26,14 @@ test("encodes the pinned deterministic Walrus Quilt contract", async () => {
   expect(forward.bytes).toEqual(reverse.bytes);
   expect(forward.bytes.byteLength).toBe(445_556);
   expect(createHash("sha256").update(forward.bytes).digest("hex")).toBe(
-    "a902740f51acc7eca8563c1c99c9f49e4bb1947702b01832393030301d4dccaf",
+    "0c707a2490267d5e8634c3d9a2baa663e4d85c5ab2528307208b649e10167b8b",
   );
   expect(forward.patches.map((patch) => patch.identifier)).toEqual([
-    "aac-096-00000.m4s",
+    "aac-96-00000.m4s",
     "index.json",
   ]);
   expect(forward.patches[0]).toEqual({
-    identifier: "aac-096-00000.m4s",
+    identifier: "aac-96-00000.m4s",
     startIndex: 1,
     endIndex: 2,
     tags: {

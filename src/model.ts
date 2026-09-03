@@ -1,6 +1,6 @@
 export const SCHEMA_ID = "miso.aac-transcode-quilt/1" as const;
 export const RENDITIONS = [
-  { id: "aac-096", nominalBitrate: 96_000 },
+  { id: "aac-96", nominalBitrate: 96_000 },
   { id: "aac-160", nominalBitrate: 160_000 },
   { id: "aac-256", nominalBitrate: 256_000 },
 ] as const;

@@ -2,36 +2,36 @@
   "schema": "miso.transcoder-golden/1",
   "image": "ghcr.io/linuxserver/ffmpeg:8.1.2-cli-ls76@sha256:8e412a7a8bdbb65df95afced960f34ac1e7a8b90c17501b7c774053c08d18e25",
   "sourceSha256": "306e1210f2f05ee3baf5cd4aef85cc8a4672219f605ddd4afb1753dc7eb18c7d",
-  "indexSha256": "05d93f7730cb30e28e36366d2419f0bbfd401c9e27f3408710b2e0e601aea9b2",
-  "indexBase64": "ewogICJzY2hlbWEiOiAibWlzby5hYWMtdHJhbnNjb2RlLXF1aWx0LzEiLAogICJyZWNvcmRpbmdJZCI6ICIweDAxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMDEiLAogICJnZW5lcmF0aW9uIjogImlUUGJScXpfVE9LS3phdDltdmxmaHZUMXZNeENFeFBlSW9LVnJPWnFZY2siLAogICJtYXN0ZXJQbGF5bGlzdCI6ICJtYXN0ZXIubTN1OCIsCiAgInNlZ21lbnRUYXJnZXRNcyI6IDYwMDAsCiAgInBhdGNoQ291bnQiOiAxNCwKICAicmVuZGl0aW9ucyI6IFsKICAgIHsKICAgICAgImlkIjogImFhYy0wOTYiLAogICAgICAiY29kZWMiOiAibXA0YS40MC4yIiwKICAgICAgIm5vbWluYWxCaXRyYXRlIjogOTYwMDAsCiAgICAgICJhdmVyYWdlQmFuZHdpZHRoIjogOTgzNzUsCiAgICAgICJwZWFrQmFuZHdpZHRoIjogMTAxMTAzLAogICAgICAic2FtcGxlUmF0ZUh6IjogNDgwMDAsCiAgICAgICJjaGFubmVscyI6IDIsCiAgICAgICJwbGF5bGlzdCI6ICJhYWMtMDk2Lm0zdTgiLAogICAgICAiaW5pdCI6IHsKICAgICAgICAiaWRlbnRpZmllciI6ICJhYWMtMDk2LWluaXQubXA0IiwKICAgICAgICAiYnl0ZXMiOiA3NjUsCiAgICAgICAgInNoYTI1NiI6ICIyOWE3MWFhMGNhMzhiOTJlMTBlNTAzNTZkMGI3NTU1MTAzZGZlYWZlYjgzNGYyODM1YzIxNjRhNzA2Njc3ZWFmIgogICAgICB9LAogICAgICAic2VnbWVudHMiOiBbCiAgICAgICAgewogICAgICAgICAgInNlcXVlbmNlIjogMCwKICAgICAgICAgICJpZGVudGlmaWVyIjogImFhYy0wOTYtMDAwMDAubTRzIiwKICAgICAgICAgICJkdXJhdGlvbk1zIjogNjAxNiwKICAgICAgICAgICJieXRlcyI6IDczNjM1LAogICAgICAgICAgInNoYTI1NiI6ICJiMTJkZmQzOTYwZmMzYWYzMTI0ZTg0YjU2M2EzZjIwODJmOGNlN2QyYjllMzI5Y2IxNTBjNzZkYWI5ZWQ1ZWUzIgogICAgICAgIH0sCiAgICAgICAgewogICAgICAgICAgInNlcXVlbmNlIjogMSwKICAgICAgICAgICJpZGVudGlmaWVyIjogImFhYy0wOTYtMDAwMDEubTRzIiwKICAgICAgICAgICJkdXJhdGlvbk1zIjogMTAwNSwKICAgICAgICAgICJieXRlcyI6IDEyNzAxLAogICAgICAgICAgInNoYTI1NiI6ICI1NGEyOTcyNzViMjFjZWFiZGJjOWQ4ZDZiN2VlMDkzZGE2Y2RmYmVmNTViMTJjMTJiZDljZjU0NDMxMmE1OTllIgogICAgICAgIH0KICAgICAgXQogICAgfSwKICAgIHsKICAgICAgImlkIjogImFhYy0xNjAiLAogICAgICAiY29kZWMiOiAibXA0YS40MC4yIiwKICAgICAgIm5vbWluYWxCaXRyYXRlIjogMTYwMDAwLAogICAgICAiYXZlcmFnZUJhbmR3aWR0aCI6IDE2MjA2MSwKICAgICAgInBlYWtCYW5kd2lkdGgiOiAxNjQ0MDIsCiAgICAgICJzYW1wbGVSYXRlSHoiOiA0ODAwMCwKICAgICAgImNoYW5uZWxzIjogMiwKICAgICAgInBsYXlsaXN0IjogImFhYy0xNjAubTN1OCIsCiAgICAgICJpbml0IjogewogICAgICAgICJpZGVudGlmaWVyIjogImFhYy0xNjAtaW5pdC5tcDQiLAogICAgICAgICJieXRlcyI6IDc2NSwKICAgICAgICAic2hhMjU2IjogIjk4NThlMTJiNDk4YTNjOTAyNDEwMmZlYjVhYzNkZDlmOWY1MWMzZjE3ZTFhNTBhOTZjZmEyOTQ4NzE1MDMwZjMiCiAgICAgIH0sCiAgICAgICJzZWdtZW50cyI6IFsKICAgICAgICB7CiAgICAgICAgICAic2VxdWVuY2UiOiAwLAogICAgICAgICAgImlkZW50aWZpZXIiOiAiYWFjLTE2MC0wMDAwMC5tNHMiLAogICAgICAgICAgImR1cmF0aW9uTXMiOiA2MDE2LAogICAgICAgICAgImJ5dGVzIjogMTIxNTc1LAogICAgICAgICAgInNoYTI1NiI6ICI1MGY2ZjJkZTFhZjViMjdkNTI4NDhmNTdjNTgzMTdmYWQ4Y2Y5NDk0NTc4MzBlYWVmY2MxYjU3OGYyMzFlNWVlIgogICAgICAgIH0sCiAgICAgICAgewogICAgICAgICAgInNlcXVlbmNlIjogMSwKICAgICAgICAgICJpZGVudGlmaWVyIjogImFhYy0xNjAtMDAwMDEubTRzIiwKICAgICAgICAgICJkdXJhdGlvbk1zIjogMTAwNSwKICAgICAgICAgICJieXRlcyI6IDIwNjUzLAogICAgICAgICAgInNoYTI1NiI6ICI3YWNjZjFiNzlmNzRkZTg0YWU4MGQ3ZDk3YjFjZDI5ODVlOWJiYjAxOTFlOWJiYTRlY2UwYWIwMmI3MzVhZTNhIgogICAgICAgIH0KICAgICAgXQogICAgfSwKICAgIHsKICAgICAgImlkIjogImFhYy0yNTYiLAogICAgICAiY29kZWMiOiAibXA0YS40MC4yIiwKICAgICAgIm5vbWluYWxCaXRyYXRlIjogMjU2MDAwLAogICAgICAiYXZlcmFnZUJhbmR3aWR0aCI6IDI0MjIxMywKICAgICAgInBlYWtCYW5kd2lkdGgiOiAyNDQzMjMsCiAgICAgICJzYW1wbGVSYXRlSHoiOiA0ODAwMCwKICAgICAgImNoYW5uZWxzIjogMiwKICAgICAgInBsYXlsaXN0IjogImFhYy0yNTYubTN1OCIsCiAgICAgICJpbml0IjogewogICAgICAgICJpZGVudGlmaWVyIjogImFhYy0yNTYtaW5pdC5tcDQiLAogICAgICAgICJieXRlcyI6IDc2NSwKICAgICAgICAic2hhMjU2IjogImY2MjI2MGY5YzcyYTU0M2M1YjNlZTA1MzljZDhiZjBiNWUxOWRhMjU0MDExMDM2OGMxMTdjNzI1NDkwZWU0ZGQiCiAgICAgIH0sCiAgICAgICJzZWdtZW50cyI6IFsKICAgICAgICB7CiAgICAgICAgICAic2VxdWVuY2UiOiAwLAogICAgICAgICAgImlkZW50aWZpZXIiOiAiYWFjLTI1Ni0wMDAwMC5tNHMiLAogICAgICAgICAgImR1cmF0aW9uTXMiOiA2MDE2LAogICAgICAgICAgImJ5dGVzIjogMTgxODc5LAogICAgICAgICAgInNoYTI1NiI6ICI3ZmU5ZjEzYTA4MjU4ZjI4MzkxNmM0YjMyNjk0Y2JhOTQxYjJkZWMwYjgzNDY2M2YzYTYxOWU1NjdmYTAzYzY4IgogICAgICAgIH0sCiAgICAgICAgewogICAgICAgICAgInNlcXVlbmNlIjogMSwKICAgICAgICAgICJpZGVudGlmaWVyIjogImFhYy0yNTYtMDAwMDEubTRzIiwKICAgICAgICAgICJkdXJhdGlvbk1zIjogMTAwNSwKICAgICAgICAgICJieXRlcyI6IDMwNjkzLAogICAgICAgICAgInNoYTI1NiI6ICI2Y2QxNDM3Mzk4ODlkZWI0ZDA2YjdjMTNmN2U4MzdmODI2OTc4MmU5N2NmYTkyY2FjMDQ1NjJmMzAzOTdhYzY0IgogICAgICAgIH0KICAgICAgXQogICAgfQogIF0KfQo=",
+  "indexSha256": "a82f671ef9fc96e913d8de102cdc37e1fca1d0a09e5cae208c6a36b4ae21c0fb",
+  "indexBase64": "ewogICJzY2hlbWEiOiAibWlzby5hYWMtdHJhbnNjb2RlLXF1aWx0LzEiLAogICJyZWNvcmRpbmdJZCI6ICIweDAxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMDEiLAogICJnZW5lcmF0aW9uIjogIlRaNUdkc1F1dUdGVjFFU0g4LUpyV3BJWEFRQzN2Vi1ZSGd2OWNlWWFGanMiLAogICJtYXN0ZXJQbGF5bGlzdCI6ICJtYXN0ZXIubTN1OCIsCiAgInNlZ21lbnRUYXJnZXRNcyI6IDYwMDAsCiAgInBhdGNoQ291bnQiOiAxNCwKICAicmVuZGl0aW9ucyI6IFsKICAgIHsKICAgICAgImlkIjogImFhYy05NiIsCiAgICAgICJjb2RlYyI6ICJtcDRhLjQwLjIiLAogICAgICAibm9taW5hbEJpdHJhdGUiOiA5NjAwMCwKICAgICAgImF2ZXJhZ2VCYW5kd2lkdGgiOiA5ODM3NSwKICAgICAgInBlYWtCYW5kd2lkdGgiOiAxMDExMDMsCiAgICAgICJzYW1wbGVSYXRlSHoiOiA0ODAwMCwKICAgICAgImNoYW5uZWxzIjogMiwKICAgICAgInBsYXlsaXN0IjogImFhYy05Ni5tM3U4IiwKICAgICAgImluaXQiOiB7CiAgICAgICAgImlkZW50aWZpZXIiOiAiYWFjLTk2LWluaXQubXA0IiwKICAgICAgICAiYnl0ZXMiOiA3NjUsCiAgICAgICAgInNoYTI1NiI6ICIyOWE3MWFhMGNhMzhiOTJlMTBlNTAzNTZkMGI3NTU1MTAzZGZlYWZlYjgzNGYyODM1YzIxNjRhNzA2Njc3ZWFmIgogICAgICB9LAogICAgICAic2VnbWVudHMiOiBbCiAgICAgICAgewogICAgICAgICAgInNlcXVlbmNlIjogMCwKICAgICAgICAgICJpZGVudGlmaWVyIjogImFhYy05Ni0wMDAwMC5tNHMiLAogICAgICAgICAgImR1cmF0aW9uTXMiOiA2MDE2LAogICAgICAgICAgImJ5dGVzIjogNzM2MzUsCiAgICAgICAgICAic2hhMjU2IjogImIxMmRmZDM5NjBmYzNhZjMxMjRlODRiNTYzYTNmMjA4MmY4Y2U3ZDJiOWUzMjljYjE1MGM3NmRhYjllZDVlZTMiCiAgICAgICAgfSwKICAgICAgICB7CiAgICAgICAgICAic2VxdWVuY2UiOiAxLAogICAgICAgICAgImlkZW50aWZpZXIiOiAiYWFjLTk2LTAwMDAxLm00cyIsCiAgICAgICAgICAiZHVyYXRpb25NcyI6IDEwMDUsCiAgICAgICAgICAiYnl0ZXMiOiAxMjcwMSwKICAgICAgICAgICJzaGEyNTYiOiAiNTRhMjk3Mjc1YjIxY2VhYmRiYzlkOGQ2YjdlZTA5M2RhNmNkZmJlZjU1YjEyYzEyYmQ5Y2Y1NDQzMTJhNTk5ZSIKICAgICAgICB9CiAgICAgIF0KICAgIH0sCiAgICB7CiAgICAgICJpZCI6ICJhYWMtMTYwIiwKICAgICAgImNvZGVjIjogIm1wNGEuNDAuMiIsCiAgICAgICJub21pbmFsQml0cmF0ZSI6IDE2MDAwMCwKICAgICAgImF2ZXJhZ2VCYW5kd2lkdGgiOiAxNjIwNjEsCiAgICAgICJwZWFrQmFuZHdpZHRoIjogMTY0NDAyLAogICAgICAic2FtcGxlUmF0ZUh6IjogNDgwMDAsCiAgICAgICJjaGFubmVscyI6IDIsCiAgICAgICJwbGF5bGlzdCI6ICJhYWMtMTYwLm0zdTgiLAogICAgICAiaW5pdCI6IHsKICAgICAgICAiaWRlbnRpZmllciI6ICJhYWMtMTYwLWluaXQubXA0IiwKICAgICAgICAiYnl0ZXMiOiA3NjUsCiAgICAgICAgInNoYTI1NiI6ICI5ODU4ZTEyYjQ5OGEzYzkwMjQxMDJmZWI1YWMzZGQ5ZjlmNTFjM2YxN2UxYTUwYTk2Y2ZhMjk0ODcxNTAzMGYzIgogICAgICB9LAogICAgICAic2VnbWVudHMiOiBbCiAgICAgICAgewogICAgICAgICAgInNlcXVlbmNlIjogMCwKICAgICAgICAgICJpZGVudGlmaWVyIjogImFhYy0xNjAtMDAwMDAubTRzIiwKICAgICAgICAgICJkdXJhdGlvbk1zIjogNjAxNiwKICAgICAgICAgICJieXRlcyI6IDEyMTU3NSwKICAgICAgICAgICJzaGEyNTYiOiAiNTBmNmYyZGUxYWY1YjI3ZDUyODQ4ZjU3YzU4MzE3ZmFkOGNmOTQ5NDU3ODMwZWFlZmNjMWI1NzhmMjMxZTVlZSIKICAgICAgICB9LAogICAgICAgIHsKICAgICAgICAgICJzZXF1ZW5jZSI6IDEsCiAgICAgICAgICAiaWRlbnRpZmllciI6ICJhYWMtMTYwLTAwMDAxLm00cyIsCiAgICAgICAgICAiZHVyYXRpb25NcyI6IDEwMDUsCiAgICAgICAgICAiYnl0ZXMiOiAyMDY1MywKICAgICAgICAgICJzaGEyNTYiOiAiN2FjY2YxYjc5Zjc0ZGU4NGFlODBkN2Q5N2IxY2QyOTg1ZTliYmIwMTkxZTliYmE0ZWNlMGFiMDJiNzM1YWUzYSIKICAgICAgICB9CiAgICAgIF0KICAgIH0sCiAgICB7CiAgICAgICJpZCI6ICJhYWMtMjU2IiwKICAgICAgImNvZGVjIjogIm1wNGEuNDAuMiIsCiAgICAgICJub21pbmFsQml0cmF0ZSI6IDI1NjAwMCwKICAgICAgImF2ZXJhZ2VCYW5kd2lkdGgiOiAyNDIyMTMsCiAgICAgICJwZWFrQmFuZHdpZHRoIjogMjQ0MzIzLAogICAgICAic2FtcGxlUmF0ZUh6IjogNDgwMDAsCiAgICAgICJjaGFubmVscyI6IDIsCiAgICAgICJwbGF5bGlzdCI6ICJhYWMtMjU2Lm0zdTgiLAogICAgICAiaW5pdCI6IHsKICAgICAgICAiaWRlbnRpZmllciI6ICJhYWMtMjU2LWluaXQubXA0IiwKICAgICAgICAiYnl0ZXMiOiA3NjUsCiAgICAgICAgInNoYTI1NiI6ICJmNjIyNjBmOWM3MmE1NDNjNWIzZWUwNTM5Y2Q4YmYwYjVlMTlkYTI1NDAxMTAzNjhjMTE3YzcyNTQ5MGVlNGRkIgogICAgICB9LAogICAgICAic2VnbWVudHMiOiBbCiAgICAgICAgewogICAgICAgICAgInNlcXVlbmNlIjogMCwKICAgICAgICAgICJpZGVudGlmaWVyIjogImFhYy0yNTYtMDAwMDAubTRzIiwKICAgICAgICAgICJkdXJhdGlvbk1zIjogNjAxNiwKICAgICAgICAgICJieXRlcyI6IDE4MTg3OSwKICAgICAgICAgICJzaGEyNTYiOiAiN2ZlOWYxM2EwODI1OGYyODM5MTZjNGIzMjY5NGNiYTk0MWIyZGVjMGI4MzQ2NjNmM2E2MTllNTY3ZmEwM2M2OCIKICAgICAgICB9LAogICAgICAgIHsKICAgICAgICAgICJzZXF1ZW5jZSI6IDEsCiAgICAgICAgICAiaWRlbnRpZmllciI6ICJhYWMtMjU2LTAwMDAxLm00cyIsCiAgICAgICAgICAiZHVyYXRpb25NcyI6IDEwMDUsCiAgICAgICAgICAiYnl0ZXMiOiAzMDY5MywKICAgICAgICAgICJzaGEyNTYiOiAiNmNkMTQzNzM5ODg5ZGViNGQwNmI3YzEzZjdlODM3ZjgyNjk3ODJlOTdjZmE5MmNhYzA0NTYyZjMwMzk3YWM2NCIKICAgICAgICB9CiAgICAgIF0KICAgIH0KICBdCn0K",
   "patchCount": 14,
   "patches": [
     {
       "identifier": "index.json",
-      "bytes": 3041,
-      "sha256": "05d93f7730cb30e28e36366d2419f0bbfd401c9e27f3408710b2e0e601aea9b2",
+      "bytes": 3036,
+      "sha256": "a82f671ef9fc96e913d8de102cdc37e1fca1d0a09e5cae208c6a36b4ae21c0fb",
       "tags": {
         "content-type": "application/json; charset=utf-8"
       }
     },
     {
       "identifier": "master.m3u8",
-      "bytes": 300,
-      "sha256": "58fdabde6ab0f3cc7beb4360bdf1340b9d9e38dce7cb5d4a2e1e342626f06c63",
+      "bytes": 299,
+      "sha256": "d08e782491e4e300361ea393fe619f6191b5e9eae948595df4469384fa6c471f",
       "tags": {
         "content-type": "application/vnd.apple.mpegurl"
       }
     },
     {
-      "identifier": "aac-096.m3u8",
-      "bytes": 219,
-      "sha256": "83d1bbd9ae723555dc30ad41565f22045459f86778c807822af0feeffb7b5ba6",
+      "identifier": "aac-96.m3u8",
+      "bytes": 216,
+      "sha256": "f2841789358a640ecc4859d9d702823d820eab95099b225b6be5120a08cc3063",
       "tags": {
         "content-type": "application/vnd.apple.mpegurl"
       }
     },
     {
-      "identifier": "aac-096-init.mp4",
+      "identifier": "aac-96-init.mp4",
       "bytes": 765,
       "sha256": "29a71aa0ca38b92e10e50356d0b7555103dfeafeb834f2835c2164a706677eaf",
       "tags": {
@@ -39,7 +39,7 @@
       }
     },
     {
-      "identifier": "aac-096-00000.m4s",
+      "identifier": "aac-96-00000.m4s",
       "bytes": 73635,
       "sha256": "b12dfd3960fc3af3124e84b563a3f2082f8ce7d2b9e329cb150c76dab9ed5ee3",
       "tags": {
@@ -47,7 +47,7 @@
       }
     },
     {
-      "identifier": "aac-096-00001.m4s",
+      "identifier": "aac-96-00001.m4s",
       "bytes": 12701,
       "sha256": "54a297275b21ceabdbc9d8d6b7ee093da6cdfbef55b12c12bd9cf544312a599e",
       "tags": {
@@ -121,92 +121,92 @@
   ],
   "quilt": {
     "bytes": 891112,
-    "sha256": "5e119ceedcd9ec67621927cde89e7daa5552b0654094669fe2bfbfe16ef21620",
+    "sha256": "40567a51d073ecae8dff6efbdd486884229a3e22f0677818bfec5909eb515277",
     "encodingType": "RS2",
     "numShards": 1000,
     "patches": [
       {
-        "identifier": "aac-096-00000.m4s",
-        "startIndex": 1,
-        "endIndex": 57,
-        "tags": {
-          "content-type": "audio/mp4"
-        }
-      },
-      {
-        "identifier": "aac-096-00001.m4s",
-        "startIndex": 57,
-        "endIndex": 67,
-        "tags": {
-          "content-type": "audio/mp4"
-        }
-      },
-      {
-        "identifier": "aac-096-init.mp4",
-        "startIndex": 67,
-        "endIndex": 68,
-        "tags": {
-          "content-type": "audio/mp4"
-        }
-      },
-      {
-        "identifier": "aac-096.m3u8",
-        "startIndex": 68,
-        "endIndex": 69,
-        "tags": {
-          "content-type": "application/vnd.apple.mpegurl"
-        }
-      },
-      {
         "identifier": "aac-160-00000.m4s",
-        "startIndex": 69,
-        "endIndex": 161,
+        "startIndex": 1,
+        "endIndex": 93,
         "tags": {
           "content-type": "audio/mp4"
         }
       },
       {
         "identifier": "aac-160-00001.m4s",
-        "startIndex": 161,
-        "endIndex": 177,
+        "startIndex": 93,
+        "endIndex": 109,
         "tags": {
           "content-type": "audio/mp4"
         }
       },
       {
         "identifier": "aac-160-init.mp4",
-        "startIndex": 177,
-        "endIndex": 178,
+        "startIndex": 109,
+        "endIndex": 110,
         "tags": {
           "content-type": "audio/mp4"
         }
       },
       {
         "identifier": "aac-160.m3u8",
-        "startIndex": 178,
-        "endIndex": 179,
+        "startIndex": 110,
+        "endIndex": 111,
         "tags": {
           "content-type": "application/vnd.apple.mpegurl"
         }
       },
       {
         "identifier": "aac-256-00000.m4s",
-        "startIndex": 179,
-        "endIndex": 316,
+        "startIndex": 111,
+        "endIndex": 248,
         "tags": {
           "content-type": "audio/mp4"
         }
       },
       {
         "identifier": "aac-256-00001.m4s",
-        "startIndex": 316,
-        "endIndex": 340,
+        "startIndex": 248,
+        "endIndex": 272,
         "tags": {
           "content-type": "audio/mp4"
         }
       },
       {
         "identifier": "aac-256-init.mp4",
+        "startIndex": 272,
+        "endIndex": 273,
+        "tags": {
+          "content-type": "audio/mp4"
+        }
+      },
+      {
+        "identifier": "aac-256.m3u8",
+        "startIndex": 273,
+        "endIndex": 274,
+        "tags": {
+          "content-type": "application/vnd.apple.mpegurl"
+        }
+      },
+      {
+        "identifier": "aac-96-00000.m4s",
+        "startIndex": 274,
+        "endIndex": 330,
+        "tags": {
+          "content-type": "audio/mp4"
+        }
+      },
+      {
+        "identifier": "aac-96-00001.m4s",
+        "startIndex": 330,
+        "endIndex": 340,
+        "tags": {
+          "content-type": "audio/mp4"
+        }
+      },
+      {
+        "identifier": "aac-96-init.mp4",
         "startIndex": 340,
         "endIndex": 341,
         "tags": {
@@ -214,7 +214,7 @@
         }
       },
       {
-        "identifier": "aac-256.m3u8",
+        "identifier": "aac-96.m3u8",
         "startIndex": 341,
         "endIndex": 342,
         "tags": {
