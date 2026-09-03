@@ -5,6 +5,7 @@ import * as Path from "effect/Path";
 import type {
   ArtifactValidationError,
   InvalidRequestError,
+  QuiltEncodingError,
   StaleWorkspaceError,
   WorkspaceIoError,
   WorkspaceLockedError,
@@ -33,7 +34,10 @@ import {
 } from "./prepare.js";
 import { verifyArtifact } from "./verify.js";
 
-export type FinalizeError = ArtifactValidationError | WorkspaceIoError;
+export type FinalizeError =
+  | ArtifactValidationError
+  | QuiltEncodingError
+  | WorkspaceIoError;
 export type VerifyError = ArtifactValidationError;
 export type CleanupError =
   | InvalidRequestError

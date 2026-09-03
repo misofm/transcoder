@@ -4,7 +4,9 @@ import { join, relative } from "node:path";
 
 const pinnedEffectVersion = "4.0.0-rc.112";
 const pinnedFfmpegImage =
-  "ghcr.io/linuxserver/ffmpeg:8.1.2-cli-ls76@sha256:2e7000921be8de2704a4f27dfd3d988562697a346eaabb937a81046c306f0af7";
+  "ghcr.io/linuxserver/ffmpeg:8.1.2-cli-ls76@sha256:8e412a7a8bdbb65df95afced960f34ac1e7a8b90c17501b7c774053c08d18e25";
+const pinnedWalrusVersion = "1.2.23";
+const pinnedSuiVersion = "2.29.0";
 
 const readJson = async (url: URL): Promise<Record<string, unknown>> =>
   JSON.parse(await readFile(url, "utf8")) as Record<string, unknown>;
@@ -31,6 +33,14 @@ test("Effect and platform-node share one exact peer/dev version", async () => {
   });
   expect(effectManifest.version).toBe(pinnedEffectVersion);
   expect(platformManifest.version).toBe(pinnedEffectVersion);
+});
+
+test("Walrus Quilt encoding uses exact official SDK versions", async () => {
+  const manifest = await readJson(new URL("../package.json", import.meta.url));
+  expect(manifest.dependencies).toMatchObject({
+    "@mysten/walrus": pinnedWalrusVersion,
+    "@mysten/sui": pinnedSuiVersion,
+  });
 });
 
 test("FFmpeg conformance uses one digest-pinned reference image", async () => {
@@ -83,12 +93,14 @@ test("unstable Effect process APIs cannot escape the NativeProcess adapter", asy
   }
 });
 
-test("library sources have a silent observer boundary and no deployment SDK", async () => {
+test("library sources stay silent and isolate the Walrus SDK", async () => {
   const root = new URL("../src", import.meta.url).pathname;
   for (const file of await sourceFiles(root)) {
     const source = await readFile(file, "utf8");
     expect(source).not.toMatch(
-      /console\.|process\.(?:stdout|stderr)|@mysten|keySeal|key\.seal/u,
+      /console\.|process\.(?:stdout|stderr)|keySeal|key\.seal/u,
     );
+    if (source.includes("@mysten/walrus"))
+      expect(relative(root, file)).toBe("quilt/encoder.ts");
   }
 });

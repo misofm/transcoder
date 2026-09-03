@@ -159,8 +159,10 @@ const verifyInventory = (files, index) => {
   }
   if (
     expected.size !== index.patchCount ||
-    files.size !== expected.size ||
-    [...files.keys()].some((identifier) => !expected.has(identifier))
+    ![expected.size, expected.size + 1].includes(files.size) ||
+    [...files.keys()].some(
+      (identifier) => identifier !== "quilt.blob" && !expected.has(identifier),
+    )
   )
     throw new TypeError(
       "Quilt inventory or patch count does not match index.json",

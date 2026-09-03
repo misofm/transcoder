@@ -14,7 +14,11 @@ import { basename, join } from "node:path";
 import { Effect } from "effect";
 
 import { canonicalIndexBytes, sha256Hex } from "../artifact.js";
-import { ArtifactValidationError, WorkspaceIoError } from "../errors.js";
+import {
+  ArtifactValidationError,
+  QuiltEncodingError,
+  WorkspaceIoError,
+} from "../errors.js";
 import { calculateBandwidth } from "../hls/bandwidth.js";
 import { renderMasterPlaylist } from "../hls/master.js";
 import { parsePlaintextMediaPlaylist } from "../hls/playlist.js";
@@ -26,8 +30,16 @@ import {
   type QuiltIndex,
   type QuiltPatch,
   type RenditionDescriptor,
+  type WalrusQuilt,
 } from "../model.js";
 import { patchCountForSegments } from "../profile.js";
+import {
+  MAX_QUILT_SOURCE_BYTES,
+  WALRUS_QUILT_ENCODING_TYPE,
+  WALRUS_QUILT_NUM_SHARDS,
+  encodeWalrusQuilt,
+  quiltPatchTags,
+} from "../quilt/encoder.js";
 import { parseQuiltIndex } from "../schema.js";
 import {
   assertNoSymlinkComponentsPromise,
@@ -75,7 +87,7 @@ const generationDigest = (
   contentDigest: string,
 ): string => {
   const hash = createHash("sha256");
-  hash.update("miso.transcoder.generation/1\0");
+  hash.update("miso.transcoder.walrus-quilt-generation/1\0");
   hash.update(contentDigest, "utf8");
   hash.update(request.recordingId, "utf8");
   return hash.digest("hex");
@@ -87,6 +99,7 @@ const generationIdentity = (digest: string): string =>
 const readBounded = async (
   path: string,
   ceiling: number,
+  signal?: AbortSignal,
 ): Promise<Uint8Array> => {
   const handle = await open(
     path,
@@ -99,6 +112,7 @@ const readBounded = async (
     const bytes = Buffer.allocUnsafe(metadata.size);
     let offset = 0;
     while (offset < bytes.byteLength) {
+      if (signal !== undefined) throwIfAborted(signal);
       const { bytesRead } = await handle.read(
         bytes,
         offset,
@@ -149,6 +163,80 @@ const inspectAndHash = async (
   } finally {
     await handle.close();
   }
+};
+
+const listRegularFiles = async (
+  rootPath: string,
+  prefix = "",
+): Promise<readonly string[]> => {
+  const entries = await readdir(join(rootPath, prefix), {
+    withFileTypes: true,
+  });
+  const files: string[] = [];
+  for (const entry of entries) {
+    const identifier = prefix === "" ? entry.name : `${prefix}/${entry.name}`;
+    if (entry.isSymbolicLink()) throw new TypeError("symlink in artifact");
+    if (entry.isDirectory())
+      files.push(...(await listRegularFiles(rootPath, identifier)));
+    else if (entry.isFile()) files.push(identifier);
+    else throw new TypeError("non-regular artifact entry");
+  }
+  return files.sort();
+};
+
+const encodeArtifactQuilt = async (
+  rootPath: string,
+  patches: readonly QuiltPatch[],
+  signal: AbortSignal,
+): Promise<{
+  readonly bytes: Uint8Array;
+  readonly descriptor: WalrusQuilt;
+}> => {
+  const sourceBytes = patches.reduce((total, patch) => total + patch.bytes, 0);
+  if (
+    !Number.isSafeInteger(sourceBytes) ||
+    sourceBytes > MAX_QUILT_SOURCE_BYTES
+  )
+    throw new QuiltEncodingError({
+      code: "QUILT_ENCODING",
+      phase: "quilt",
+      subject: "quilt.blob",
+      message: "Walrus Quilt source exceeds the aggregate byte limit",
+      patchCount: patches.length,
+      sourceBytes,
+    });
+  const blobs = [];
+  for (const patch of patches) {
+    throwIfAborted(signal);
+    const contents = await readBounded(
+      join(rootPath, patch.identifier),
+      MAX_ARTIFACT_FILE_BYTES,
+      signal,
+    );
+    if (
+      contents.byteLength !== patch.bytes ||
+      sha256Hex(contents) !== patch.sha256
+    )
+      throw artifactError(
+        patch.identifier,
+        "Patch changed before Quilt encoding",
+      );
+    blobs.push({ identifier: patch.identifier, contents, tags: patch.tags });
+  }
+  throwIfAborted(signal);
+  const encoded = await Effect.runPromise(encodeWalrusQuilt(blobs));
+  throwIfAborted(signal);
+  return {
+    bytes: encoded.bytes,
+    descriptor: {
+      path: join(rootPath, "quilt.blob"),
+      bytes: encoded.bytes.byteLength,
+      sha256: sha256Hex(encoded.bytes),
+      encodingType: WALRUS_QUILT_ENCODING_TYPE,
+      numShards: WALRUS_QUILT_NUM_SHARDS,
+      patches: encoded.patches,
+    },
+  };
 };
 
 const preparedContentDigest = async (
@@ -289,6 +377,7 @@ const generationCheckpointBytes = (
   contentDigest: string,
   request: FinalizeRequest,
   patches: readonly QuiltPatch[],
+  quilt: WalrusQuilt,
 ): Uint8Array =>
   new TextEncoder().encode(
     `${JSON.stringify(
@@ -306,6 +395,13 @@ const generationCheckpointBytes = (
           bytes,
           sha256,
         })),
+        quilt: {
+          bytes: quilt.bytes,
+          sha256: quilt.sha256,
+          encodingType: quilt.encodingType,
+          numShards: quilt.numShards,
+          patches: quilt.patches,
+        },
       },
       null,
       2,
@@ -317,6 +413,7 @@ const loadExistingArtifact = async (
   digest: string,
   contentDigest: string,
   request: FinalizeRequest,
+  signal: AbortSignal,
 ): Promise<QuiltArtifact | undefined> => {
   try {
     const indexBytes = await readBounded(
@@ -345,8 +442,27 @@ const loadExistingArtifact = async (
     for (const identifier of identifiers) {
       const path = join(rootPath, identifier);
       const inspected = await inspectAndHash(path);
-      patches.push({ identifier, path, ...inspected });
+      patches.push({
+        identifier,
+        path,
+        ...inspected,
+        tags: quiltPatchTags(identifier),
+      });
     }
+    const encoded = await encodeArtifactQuilt(rootPath, patches, signal);
+    const quiltFile = await inspectAndHash(join(rootPath, "quilt.blob"));
+    if (
+      quiltFile.bytes !== encoded.descriptor.bytes ||
+      quiltFile.sha256 !== encoded.descriptor.sha256
+    )
+      throw artifactError(
+        "quilt.blob",
+        "Existing Quilt bytes do not match patches",
+      );
+    const quilt: WalrusQuilt = {
+      ...encoded.descriptor,
+      path: join(rootPath, "quilt.blob"),
+    };
     const artifact: QuiltArtifact = {
       generationDigest: digest,
       rootPath,
@@ -355,6 +471,7 @@ const loadExistingArtifact = async (
       indexSha256: sha256Hex(indexBytes),
       patchCount: identifiers.length,
       patches,
+      quilt,
       toolchain: request.prepared.toolchain,
     };
     const verified = await Effect.runPromise(verifyArtifact(artifact));
@@ -368,6 +485,7 @@ const loadExistingArtifact = async (
         contentDigest,
         request,
         verified.patches,
+        verified.quilt,
       );
       if (!Buffer.from(checkpoint).equals(Buffer.from(expected)))
         throw artifactError(
@@ -415,6 +533,7 @@ const finalizeUnsafe = async (
     digest,
     contentDigest,
     request,
+    signal,
   );
   if (existing !== undefined) {
     if (request.fresh === true)
@@ -426,6 +545,7 @@ const finalizeUnsafe = async (
         contentDigest,
         request,
         existing.patches,
+        existing.quilt,
       ),
     );
     return existing;
@@ -495,7 +615,10 @@ const finalizeUnsafe = async (
     );
     if (!segmentCounts.every((count) => count === segmentCounts[0]))
       throw artifactError("renditions", "Segment counts are not aligned");
-    if ((await preparedContentDigest(temporary, signal)) !== contentDigest)
+    if (
+      (await preparedContentDigest(request.prepared.rootPath, signal)) !==
+      contentDigest
+    )
       throw artifactError(
         request.prepared.rootPath,
         "Prepared content changed during finalization",
@@ -523,7 +646,7 @@ const finalizeUnsafe = async (
         ...rendition.segments.map((segment) => segment.identifier),
       ]),
     ];
-    const actual = (await readdir(temporary)).sort();
+    const actual = await listRegularFiles(temporary);
     if (actual.join("\0") !== [...expected].sort().join("\0"))
       throw artifactError(temporary, "Artifact has missing or extra files");
     const patches: QuiltPatch[] = [];
@@ -533,13 +656,20 @@ const finalizeUnsafe = async (
         identifier,
         path: join(target, identifier),
         ...inspected,
+        tags: quiltPatchTags(identifier),
       });
     }
+    const encoded = await encodeArtifactQuilt(temporary, patches, signal);
+    await writeAtomic(join(temporary, "quilt.blob"), encoded.bytes);
+    const quilt: WalrusQuilt = {
+      ...encoded.descriptor,
+      path: join(target, "quilt.blob"),
+    };
     throwIfAborted(signal);
     await Effect.runPromise(promoteWorkspaceDirectory(temporary, target));
     await writeAtomic(
       join(generations, `${digest}.json`),
-      generationCheckpointBytes(digest, contentDigest, request, patches),
+      generationCheckpointBytes(digest, contentDigest, request, patches, quilt),
     );
     const artifact: QuiltArtifact = {
       generationDigest: digest,
@@ -549,6 +679,7 @@ const finalizeUnsafe = async (
       indexSha256: sha256Hex(indexBytes),
       patchCount,
       patches,
+      quilt,
       toolchain: request.prepared.toolchain,
     };
     return await Effect.runPromise(verifyArtifact(artifact));
@@ -560,11 +691,15 @@ const finalizeUnsafe = async (
 
 export const finalizeTranscode = (
   request: FinalizeRequest,
-): Effect.Effect<QuiltArtifact, ArtifactValidationError | WorkspaceIoError> => {
+): Effect.Effect<
+  QuiltArtifact,
+  ArtifactValidationError | QuiltEncodingError | WorkspaceIoError
+> => {
   const mapFailure = (
     error: unknown,
-  ): ArtifactValidationError | WorkspaceIoError =>
+  ): ArtifactValidationError | QuiltEncodingError | WorkspaceIoError =>
     error instanceof ArtifactValidationError ||
+    error instanceof QuiltEncodingError ||
     error instanceof WorkspaceIoError
       ? error
       : error instanceof Error &&
@@ -606,7 +741,7 @@ export const finalizeTranscode = (
       );
     return Effect.callback<
       QuiltArtifact,
-      ArtifactValidationError | WorkspaceIoError
+      ArtifactValidationError | QuiltEncodingError | WorkspaceIoError
     >((resume, signal) => {
       const worker = finalizeUnsafe(request, concurrency, signal);
       void worker.then(

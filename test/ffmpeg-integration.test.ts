@@ -22,7 +22,7 @@ import { parsePlaintextMediaPlaylist } from "../src/hls/playlist.js";
 
 const roots: string[] = [];
 const PINNED_FFMPEG_IMAGE =
-  "ghcr.io/linuxserver/ffmpeg:8.1.2-cli-ls76@sha256:2e7000921be8de2704a4f27dfd3d988562697a346eaabb937a81046c306f0af7";
+  "ghcr.io/linuxserver/ffmpeg:8.1.2-cli-ls76@sha256:8e412a7a8bdbb65df95afced960f34ac1e7a8b90c17501b7c774053c08d18e25";
 afterAll(async () =>
   Promise.all(roots.map((root) => rm(root, { recursive: true, force: true }))),
 );
@@ -136,6 +136,11 @@ test("real FFmpeg creates one aligned three-rendition plaintext ladder", async (
   );
   expect(verified.verified).toBe(true);
   expect(verified.patchCount).toBe(14);
+  expect(verified.quilt.path).toBe(join(verified.rootPath, "quilt.blob"));
+  expect(verified.quilt.numShards).toBe(1000);
+  expect(verified.quilt.encodingType).toBe("RS2");
+  expect(verified.quilt.patches).toHaveLength(verified.patchCount);
+  expect(await Bun.file(verified.quilt.path).exists()).toBe(true);
   const index = parseQuiltIndex(await Bun.file(artifact.indexPath).bytes());
   if (process.env["MISO_PINNED_FFMPEG"] === "1") {
     const golden = `${JSON.stringify(
@@ -146,11 +151,21 @@ test("real FFmpeg creates one aligned three-rendition plaintext ladder", async (
         indexSha256: artifact.indexSha256,
         indexBase64: Buffer.from(artifact.indexBytes).toString("base64"),
         patchCount: artifact.patchCount,
-        patches: artifact.patches.map(({ identifier, bytes, sha256 }) => ({
-          identifier,
-          bytes,
-          sha256,
-        })),
+        patches: artifact.patches.map(
+          ({ identifier, bytes, sha256, tags }) => ({
+            identifier,
+            bytes,
+            sha256,
+            tags,
+          }),
+        ),
+        quilt: {
+          bytes: artifact.quilt.bytes,
+          sha256: artifact.quilt.sha256,
+          encodingType: artifact.quilt.encodingType,
+          numShards: artifact.quilt.numShards,
+          patches: artifact.quilt.patches,
+        },
         toolchain: artifact.toolchain,
       },
       null,
@@ -169,7 +184,12 @@ test("real FFmpeg creates one aligned three-rendition plaintext ladder", async (
       expect(
         await Bun.file(join(artifact.rootPath, segment.identifier)).bytes(),
       ).toEqual(
-        await Bun.file(join(prepared.rootPath, segment.identifier)).bytes(),
+        await Bun.file(
+          join(
+            prepared.rootPath,
+            `${rendition.id}-${String(segment.sequence).padStart(5, "0")}.m4s`,
+          ),
+        ).bytes(),
       );
     }
   }
@@ -285,7 +305,7 @@ test("real FFmpeg creates one aligned three-rendition plaintext ladder", async (
     const address = server.address();
     if (address === null || typeof address === "string")
       throw new Error("test server did not bind");
-    for (const id of ["aac-096", "aac-160", "aac-256"] as const) {
+    for (const rendition of index.renditions) {
       await run(ffmpegPath, [
         "-hide_banner",
         "-nostdin",
@@ -293,7 +313,7 @@ test("real FFmpeg creates one aligned three-rendition plaintext ladder", async (
         "error",
         "-xerror",
         "-i",
-        `http://127.0.0.1:${address.port}/${id}.m3u8`,
+        `http://127.0.0.1:${address.port}/${rendition.playlist}`,
         "-f",
         "null",
         "-",
@@ -427,6 +447,20 @@ test("real FFmpeg creates one aligned three-rendition plaintext ladder", async (
     ).rejects.toBeDefined();
     await writeFile(path, original);
   }
+  const quiltBytes = await readFile(artifact.quilt.path);
+  const tamperedQuilt = Buffer.from(quiltBytes);
+  tamperedQuilt[tamperedQuilt.byteLength - 1] =
+    (tamperedQuilt[tamperedQuilt.byteLength - 1] ?? 0) ^ 0xff;
+  await writeFile(artifact.quilt.path, tamperedQuilt);
+  await expect(
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const transcoder = yield* Transcoder;
+        return yield* transcoder.verify(artifact);
+      }).pipe(Effect.provide(TranscoderNodeLive)),
+    ),
+  ).rejects.toBeDefined();
+  await writeFile(artifact.quilt.path, quiltBytes);
   await Effect.runPromise(
     Effect.gen(function* () {
       const transcoder = yield* Transcoder;

@@ -8,6 +8,7 @@ export type TranscodePhase =
   | "encode"
   | "validate"
   | "finalize"
+  | "quilt"
   | "verify"
   | "workspace"
   | "process";
@@ -93,6 +94,13 @@ export class MediaValidationError extends Data.TaggedError(
 export class ArtifactValidationError extends Data.TaggedError(
   "ArtifactValidationError",
 )<FailureFields<"ARTIFACT_VALIDATION">> {}
+
+export class QuiltEncodingError extends Data.TaggedError("QuiltEncodingError")<
+  FailureFields<"QUILT_ENCODING"> & {
+    readonly patchCount: number;
+    readonly sourceBytes: number;
+  }
+> {}
 
 export type NativeProcessError =
   | InvalidRequestError

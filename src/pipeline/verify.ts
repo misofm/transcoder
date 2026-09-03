@@ -14,11 +14,46 @@ import { ArtifactValidationError } from "../errors.js";
 import { validateMasterPlaylist } from "../hls/master.js";
 import { parsePlaintextMediaPlaylist } from "../hls/playlist.js";
 import type { QuiltArtifact, QuiltPatch, VerifiedArtifact } from "../model.js";
+import {
+  MAX_QUILT_SOURCE_BYTES,
+  WALRUS_QUILT_ENCODING_TYPE,
+  WALRUS_QUILT_NUM_SHARDS,
+  encodeWalrusQuilt,
+  quiltPatchTags,
+} from "../quilt/encoder.js";
 import { parseQuiltIndex } from "../schema.js";
 
 const MAX_INDEX_BYTES = 4_194_304;
 const MAX_PLAYLIST_BYTES = 1_048_576;
 const MAX_ARTIFACT_FILE_BYTES = 256 * 1024 * 1024;
+const MAX_QUILT_BYTES = 512 * 1024 * 1024;
+
+const listRegularFiles = async (
+  rootPath: string,
+  prefix = "",
+): Promise<readonly string[]> => {
+  const entries = await readdir(join(rootPath, prefix), {
+    withFileTypes: true,
+  });
+  const files: string[] = [];
+  for (const entry of entries) {
+    const identifier = prefix === "" ? entry.name : `${prefix}/${entry.name}`;
+    if (entry.isSymbolicLink())
+      throw failure(identifier, "Artifact must not contain symlinks");
+    if (entry.isDirectory())
+      files.push(...(await listRegularFiles(rootPath, identifier)));
+    else if (entry.isFile()) files.push(identifier);
+    else throw failure(identifier, "Artifact entry must be a regular file");
+  }
+  return files.sort();
+};
+
+const sameTags = (
+  left: Readonly<Record<string, string>>,
+  right: Readonly<Record<string, string>>,
+): boolean =>
+  JSON.stringify(Object.entries(left).sort()) ===
+  JSON.stringify(Object.entries(right).sort());
 
 const readBounded = async (path: string, maximum: number): Promise<Buffer> => {
   const handle = await open(
@@ -121,8 +156,8 @@ const verifyUnsafe = async (
     index.renditions,
   );
   const identifiers = canonicalIdentifiers(index);
-  const actual = (await readdir(artifact.rootPath)).sort();
-  if (actual.join("\0") !== [...identifiers].sort().join("\0"))
+  const actual = await listRegularFiles(artifact.rootPath);
+  if (actual.join("\0") !== [...identifiers, "quilt.blob"].sort().join("\0"))
     throw failure(artifact.rootPath, "Artifact inventory mismatch");
   if (
     artifact.patchCount !== identifiers.length ||
@@ -145,7 +180,8 @@ const verifyUnsafe = async (
       patch === undefined ||
       patch.path !== path ||
       patch.bytes !== inspected.bytes ||
-      patch.sha256 !== inspected.sha256
+      patch.sha256 !== inspected.sha256 ||
+      !sameTags(patch.tags, quiltPatchTags(identifier))
     ) {
       throw failure(
         identifier,
@@ -189,6 +225,51 @@ const verifyUnsafe = async (
       }
     }
   }
+  if (
+    artifact.quilt.path !== join(artifact.rootPath, "quilt.blob") ||
+    artifact.quilt.encodingType !== WALRUS_QUILT_ENCODING_TYPE ||
+    artifact.quilt.numShards !== WALRUS_QUILT_NUM_SHARDS
+  )
+    throw failure("quilt.blob", "Quilt descriptor configuration mismatch");
+  const quiltSourceBytes = verifiedPatches.reduce(
+    (total, patch) => total + patch.bytes,
+    0,
+  );
+  if (
+    !Number.isSafeInteger(quiltSourceBytes) ||
+    quiltSourceBytes > MAX_QUILT_SOURCE_BYTES
+  )
+    throw failure("quilt.blob", "Quilt source exceeds aggregate byte limit");
+  const blobs = [];
+  for (const patch of verifiedPatches) {
+    blobs.push({
+      identifier: patch.identifier,
+      contents: await readBounded(patch.path, MAX_ARTIFACT_FILE_BYTES),
+      tags: patch.tags,
+    });
+  }
+  const encoded = await Effect.runPromise(encodeWalrusQuilt(blobs));
+  const quiltBytes = await readBounded(artifact.quilt.path, MAX_QUILT_BYTES);
+  if (
+    quiltBytes.byteLength !== artifact.quilt.bytes ||
+    sha256Hex(quiltBytes) !== artifact.quilt.sha256 ||
+    !Buffer.from(quiltBytes).equals(Buffer.from(encoded.bytes)) ||
+    encoded.patches.length !== artifact.quilt.patches.length ||
+    encoded.patches.some((patch, position) => {
+      const declaredPatch = artifact.quilt.patches[position];
+      return (
+        declaredPatch === undefined ||
+        patch.identifier !== declaredPatch.identifier ||
+        patch.startIndex !== declaredPatch.startIndex ||
+        patch.endIndex !== declaredPatch.endIndex ||
+        !sameTags(patch.tags, declaredPatch.tags)
+      );
+    })
+  )
+    throw failure(
+      "quilt.blob",
+      "Serialized Walrus Quilt does not match patches",
+    );
   return { ...artifact, patches: verifiedPatches, verified: true };
 };
 

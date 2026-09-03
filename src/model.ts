@@ -117,6 +117,23 @@ export interface QuiltPatch {
   readonly path: string;
   readonly bytes: number;
   readonly sha256: string;
+  readonly tags: Readonly<Record<string, string>>;
+}
+
+export interface WalrusQuiltPatch {
+  readonly identifier: string;
+  readonly startIndex: number;
+  readonly endIndex: number;
+  readonly tags: Readonly<Record<string, string>>;
+}
+
+export interface WalrusQuilt {
+  readonly path: string;
+  readonly bytes: number;
+  readonly sha256: string;
+  readonly encodingType: "RS2";
+  readonly numShards: 1000;
+  readonly patches: readonly WalrusQuiltPatch[];
 }
 
 export interface QuiltArtifact {
@@ -127,6 +144,7 @@ export interface QuiltArtifact {
   readonly indexSha256: string;
   readonly patchCount: number;
   readonly patches: readonly QuiltPatch[];
+  readonly quilt: WalrusQuilt;
   readonly toolchain: ToolchainFingerprint;
 }
 

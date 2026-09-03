@@ -1,7 +1,7 @@
 {
   "name": "@misofm/transcoder",
   "version": "0.2.0",
-  "description": "Effect-based deterministic plaintext AAC fMP4 HLS artifact builder.",
+  "description": "Effect-based deterministic plaintext AAC fMP4 HLS and Walrus Quilt builder.",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/misofm/transcoder.git"
@@ -52,12 +52,14 @@
     "format:check": "prettier --check .",
     "lint": "tsc -p tsconfig.json --noEmit",
     "test": "bun test",
-    "test:unit": "bun test test/dependency-contract.test.ts test/fault-injection.test.ts test/ffmpeg.test.ts test/hls.test.ts test/native-process.test.ts test/profile.test.ts test/quilt-player.test.js test/schema-artifact.test.ts test/workspace.test.ts",
+    "test:unit": "bun test test/dependency-contract.test.ts test/fault-injection.test.ts test/ffmpeg.test.ts test/hls.test.ts test/native-process.test.ts test/profile.test.ts test/quilt-encoder.test.ts test/quilt-player.test.js test/schema-artifact.test.ts test/workspace.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "pack:check": "npm pack --dry-run --json",
     "player": "bun examples/quilt-player/server.js"
   },
   "dependencies": {
+    "@mysten/sui": "2.29.0",
+    "@mysten/walrus": "1.2.23",
     "m3u8-parser": "7.2.0"
   },
   "peerDependencies": {
