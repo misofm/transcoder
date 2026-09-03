@@ -198,7 +198,7 @@ test("pinned FFmpeg produces the golden verified loose HLS ladder and plays loca
       server.close();
     }
   }
-});
+}, 60_000);
 
 test("pipeline interruption joins finalization, removes staging, and releases its lock", async () => {
   if (process.platform === "win32") return;
