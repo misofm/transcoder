@@ -5,7 +5,7 @@ import { basename, dirname, isAbsolute, join } from "node:path";
 import { Effect } from "effect";
 
 import { InvalidRequestError, WorkspaceIoError } from "../errors.js";
-import type { PreparedTranscode } from "../model.js";
+import type { PreparedTranscode, TranscodeArtifact } from "../model.js";
 import { assertNoSymlinkComponentsPromise } from "../workspace/atomic-file.js";
 
 const invalid = (subject: string, message: string) =>
@@ -121,5 +121,49 @@ export const cleanupPreparedTranscode = (
         error instanceof WorkspaceIoError
           ? error
           : io(prepared.rootPath, "Prepared plaintext cleanup failed"),
+    }),
+  );
+
+/** Explicitly removes only a canonical verified transcode generation directory. */
+export const cleanupTranscodeArtifact = (
+  artifact: TranscodeArtifact,
+): Effect.Effect<void, InvalidRequestError | WorkspaceIoError> =>
+  Effect.uninterruptible(
+    Effect.tryPromise({
+      try: async () => {
+        if (
+          !isAbsolute(artifact.rootPath) ||
+          !/^[0-9a-f]{64}$/u.test(artifact.transcodeDigest) ||
+          basename(artifact.rootPath) !== artifact.transcodeDigest ||
+          basename(dirname(artifact.rootPath)) !== "generations"
+        )
+          throw invalid(
+            artifact.rootPath,
+            "Cleanup target is not a canonical transcode directory",
+          );
+        await assertNoSymlinkComponentsPromise(dirname(artifact.rootPath));
+        try {
+          const metadata = await lstat(artifact.rootPath);
+          if (!metadata.isDirectory() || metadata.isSymbolicLink())
+            throw io(
+              artifact.rootPath,
+              "Cleanup target is not a safe directory",
+            );
+        } catch (error) {
+          if (
+            error instanceof Error &&
+            "code" in error &&
+            error.code === "ENOENT"
+          )
+            return;
+          throw error;
+        }
+        await rm(artifact.rootPath, { recursive: true });
+      },
+      catch: (error) =>
+        error instanceof InvalidRequestError ||
+        error instanceof WorkspaceIoError
+          ? error
+          : io(artifact.rootPath, "Transcode cleanup failed"),
     }),
   );

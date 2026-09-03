@@ -39,7 +39,7 @@ if (runtime === "node") {
   await run("node", [
     "--input-type=module",
     "-e",
-    'await import("@misofm/transcoder"); await import("@misofm/transcoder/node"); await import("@misofm/transcoder/schema")',
+    'await import("@misofm/transcoder"); await import("@misofm/transcoder/node")',
   ]);
 } else {
   await run("bun", [
@@ -51,13 +51,13 @@ if (runtime === "node") {
   ]);
   await run("bun", [
     "-e",
-    'await import("@misofm/transcoder"); await import("@misofm/transcoder/node"); await import("@misofm/transcoder/schema")',
+    'await import("@misofm/transcoder"); await import("@misofm/transcoder/node")',
   ]);
 }
 
 const installed = join(directory, "node_modules", "@misofm", "transcoder");
 const manifest = JSON.parse(await readFile(join(installed, "package.json")));
-const expectedExports = [".", "./node", "./package.json", "./schema"];
+const expectedExports = [".", "./node", "./package.json"];
 if (
   JSON.stringify(Object.keys(manifest.exports).sort()) !==
   JSON.stringify(expectedExports)

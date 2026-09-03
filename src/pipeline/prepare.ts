@@ -8,7 +8,7 @@ import { Effect } from "effect";
 import {
   InvalidRequestError,
   MediaValidationError,
-  PatchLimitExceededError,
+  SegmentLimitExceededError,
   PlaylistValidationError,
   StaleWorkspaceError,
   type NativeProcessError,
@@ -41,12 +41,7 @@ import {
   type PrepareRequest,
   type PreparedTranscode,
 } from "../model.js";
-import {
-  AAC_FRAME_SAMPLES,
-  MAX_PATCHES,
-  chooseSegmentTargetMs,
-  patchCountForSegments,
-} from "../profile.js";
+import { AAC_FRAME_SAMPLES, chooseSegmentTargetMs } from "../profile.js";
 import { atomicWriteFile } from "../workspace/atomic-file.js";
 import { withWorkspaceLock } from "../workspace/lock.js";
 import {
@@ -66,7 +61,7 @@ export type PrepareError =
   | WorkspaceLockedError
   | StaleWorkspaceError
   | WorkspaceIoError
-  | PatchLimitExceededError
+  | SegmentLimitExceededError
   | PlaylistValidationError
   | MediaValidationError;
 
@@ -426,6 +421,7 @@ const validatePlaylistSet = async (
   segmentTargetMs: number,
   sampleRateHz: 44_100 | 48_000,
   allowCheckpoint: boolean,
+  maxSegmentsPerRendition = Number.MAX_SAFE_INTEGER,
 ): Promise<readonly MediaPlaylist[]> => {
   try {
     assertMasterPlaylistParses(
@@ -478,15 +474,15 @@ const validatePlaylistSet = async (
   const counts = playlists.map((playlist) => playlist.segments.length);
   if (!counts.every((count) => count === counts[0]))
     throw playlistFailure(rootPath, "Rendition segment counts differ");
-  const patchCount = patchCountForSegments(counts[0] ?? 0);
-  if (patchCount > MAX_PATCHES)
-    throw new PatchLimitExceededError({
-      code: "PATCH_LIMIT_EXCEEDED",
+  const segmentCount = counts[0] ?? 0;
+  if (segmentCount > maxSegmentsPerRendition)
+    throw new SegmentLimitExceededError({
+      code: "SEGMENT_LIMIT_EXCEEDED",
       phase: "validate",
       subject: rootPath,
-      message: "Encoded ladder exceeds the Quilt v1 patch ceiling",
-      patchCount,
-      patchLimit: MAX_PATCHES,
+      message: "Encoded ladder exceeds the configured segment ceiling",
+      segmentCount,
+      segmentLimit: maxSegmentsPerRendition,
     });
   for (let sequence = 0; sequence < (counts[0] ?? 0); sequence += 1) {
     const durations = playlists.map(
@@ -557,16 +553,21 @@ export const prepareTranscode = (
             request.ffprobePath,
             request.inputPath,
           );
-          const minimumTarget = chooseSegmentTargetMs(source.durationMs);
+          const segmentLimit =
+            request.profile?.maxSegmentsPerRendition ?? Number.MAX_SAFE_INTEGER;
+          const minimumTarget = chooseSegmentTargetMs(
+            source.durationMs,
+            segmentLimit,
+          );
           if (minimumTarget === undefined)
             return yield* Effect.fail(
-              new PatchLimitExceededError({
-                code: "PATCH_LIMIT_EXCEEDED",
+              new SegmentLimitExceededError({
+                code: "SEGMENT_LIMIT_EXCEEDED",
                 phase: "prepare",
                 subject: request.inputPath,
-                message: "Source cannot fit one AAC Quilt v1 artifact",
-                patchCount: MAX_PATCHES + 1,
-                patchLimit: MAX_PATCHES,
+                message: "Source cannot fit the configured segment ceiling",
+                segmentCount: segmentLimit + 1,
+                segmentLimit,
               }),
             );
           const segmentTargetMs =
@@ -623,7 +624,11 @@ export const prepareTranscode = (
           );
           const prepareDigest = canonicalPrepareDigest({
             sourceSha256,
-            profile: { segmentTargetMs, renditions: RENDITIONS },
+            profile: {
+              segmentTargetMs,
+              maxSegmentsPerRendition: segmentLimit,
+              renditions: RENDITIONS,
+            },
             selectedStream: "0:a:0",
             source: {
               sampleRateHz: source.sampleRateHz,
@@ -726,6 +731,7 @@ export const prepareTranscode = (
                   segmentTargetMs,
                   source.sampleRateHz,
                   true,
+                  segmentLimit,
                 ),
               catch: () =>
                 new StaleWorkspaceError({
@@ -884,10 +890,11 @@ export const prepareTranscode = (
                       segmentTargetMs,
                       source.sampleRateHz,
                       false,
+                      segmentLimit,
                     ),
                   catch: (error) =>
                     error instanceof PlaylistValidationError ||
-                    error instanceof PatchLimitExceededError
+                    error instanceof SegmentLimitExceededError
                       ? error
                       : playlistFailure(
                           directory,

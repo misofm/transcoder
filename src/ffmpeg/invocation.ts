@@ -43,7 +43,7 @@ export const normalizedAudioFilter = (
     gainCentiDb === 0
       ? ""
       : `,volume=${(gainCentiDb / 100).toFixed(2)}dB:precision=double`;
-  return `[0:a:0]${channelFilter},aresample=${sampleRateHz}:async=0:first_pts=0,asetpts=N/SR/TB${gain},asplit=3[aac096][aac160][aac256]`;
+  return `[0:a:0]${channelFilter},aresample=${sampleRateHz}:async=0:first_pts=0,asetpts=N/SR/TB${gain},asplit=3[aac96][aac160][aac256]`;
 };
 
 export const buildLadderInvocation = (
@@ -96,7 +96,7 @@ export const buildLadderInvocation = (
       options.gainCentiDb,
     ),
     "-map",
-    "[aac096]",
+    "[aac96]",
     "-map",
     "[aac160]",
     "-map",

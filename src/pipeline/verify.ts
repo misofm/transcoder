@@ -1,88 +1,20 @@
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
-import { lstat, open, readdir } from "node:fs/promises";
-import { join } from "node:path";
+import { lstat, open, readdir, realpath } from "node:fs/promises";
+import { isAbsolute, join, resolve } from "node:path";
 
 import { Effect } from "effect";
 
-import {
-  canonicalIdentifiers,
-  canonicalIndexBytes,
-  sha256Hex,
-} from "../artifact.js";
 import { ArtifactValidationError } from "../errors.js";
+import { calculateBandwidth } from "../hls/bandwidth.js";
 import { validateMasterPlaylist } from "../hls/master.js";
 import { parsePlaintextMediaPlaylist } from "../hls/playlist.js";
-import type { QuiltArtifact, QuiltPatch, VerifiedArtifact } from "../model.js";
-import { parseQuiltIndex } from "../schema.js";
-
-const MAX_INDEX_BYTES = 4_194_304;
-const MAX_PLAYLIST_BYTES = 1_048_576;
-const MAX_ARTIFACT_FILE_BYTES = 256 * 1024 * 1024;
-
-const readBounded = async (path: string, maximum: number): Promise<Buffer> => {
-  const handle = await open(
-    path,
-    constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0),
-  );
-  try {
-    const metadata = await handle.stat();
-    if (!metadata.isFile() || metadata.size < 1 || metadata.size > maximum)
-      throw failure(path, "Artifact file is outside its byte limit");
-    const bytes = Buffer.allocUnsafe(metadata.size);
-    let offset = 0;
-    while (offset < bytes.byteLength) {
-      const { bytesRead } = await handle.read(
-        bytes,
-        offset,
-        bytes.byteLength - offset,
-        null,
-      );
-      if (bytesRead === 0)
-        throw failure(path, "Artifact file shrank during verification");
-      offset += bytesRead;
-    }
-    if ((await handle.read(Buffer.alloc(1), 0, 1, null)).bytesRead !== 0)
-      throw failure(path, "Artifact file grew during verification");
-    return bytes;
-  } finally {
-    await handle.close();
-  }
-};
-
-const inspectAndHash = async (
-  path: string,
-): Promise<{ readonly bytes: number; readonly sha256: string }> => {
-  const handle = await open(
-    path,
-    constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0),
-  );
-  try {
-    const metadata = await handle.stat();
-    if (
-      !metadata.isFile() ||
-      metadata.size < 1 ||
-      metadata.size > MAX_ARTIFACT_FILE_BYTES
-    )
-      throw failure(path, "Patch must be a bounded regular file");
-    const hash = createHash("sha256");
-    let bytes = 0;
-    for await (const chunk of handle.createReadStream({
-      autoClose: false,
-      highWaterMark: 64 * 1024,
-    })) {
-      bytes += chunk.byteLength;
-      if (bytes > metadata.size)
-        throw failure(path, "Patch grew during verification");
-      hash.update(chunk);
-    }
-    if (bytes !== metadata.size)
-      throw failure(path, "Patch changed during verification");
-    return { bytes: metadata.size, sha256: hash.digest("hex") };
-  } finally {
-    await handle.close();
-  }
-};
+import {
+  RENDITIONS,
+  type FileDescriptor,
+  type TranscodeArtifact,
+  type VerifiedArtifact,
+} from "../model.js";
 
 const failure = (subject: string, message: string) =>
   new ArtifactValidationError({
@@ -92,108 +24,232 @@ const failure = (subject: string, message: string) =>
     message,
   });
 
+const inspect = async (
+  path: string,
+  maximum = 256 * 1024 * 1024,
+): Promise<{ bytes: number; sha256: string }> => {
+  const handle = await open(
+    path,
+    constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0),
+  );
+  try {
+    const metadata = await handle.stat();
+    if (!metadata.isFile() || metadata.size < 1 || metadata.size > maximum)
+      throw failure(path, "Artifact file is outside its byte limit");
+    const hash = createHash("sha256");
+    let bytes = 0;
+    for await (const chunk of handle.createReadStream({
+      autoClose: false,
+      highWaterMark: 64 * 1024,
+    })) {
+      bytes += chunk.byteLength;
+      if (bytes > metadata.size)
+        throw failure(path, "Artifact file grew during verification");
+      hash.update(chunk);
+    }
+    if (bytes !== metadata.size)
+      throw failure(path, "Artifact file changed during verification");
+    return { bytes, sha256: hash.digest("hex") };
+  } finally {
+    await handle.close();
+  }
+};
+
+const read = async (path: string): Promise<Uint8Array> => {
+  const handle = await open(
+    path,
+    constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0),
+  );
+  try {
+    const metadata = await handle.stat();
+    if (!metadata.isFile() || metadata.size < 1 || metadata.size > 1_048_576)
+      throw failure(path, "Playlist is outside its byte limit");
+    const bytes = Buffer.allocUnsafe(metadata.size);
+    let offset = 0;
+    while (offset < bytes.length) {
+      const result = await handle.read(
+        bytes,
+        offset,
+        bytes.length - offset,
+        null,
+      );
+      if (result.bytesRead === 0)
+        throw failure(path, "Playlist changed during verification");
+      offset += result.bytesRead;
+    }
+    return bytes;
+  } finally {
+    await handle.close();
+  }
+};
+
+const sameDescriptor = (
+  actual: FileDescriptor,
+  expected: FileDescriptor,
+): boolean =>
+  actual.identifier === expected.identifier &&
+  actual.path === expected.path &&
+  actual.contentType === expected.contentType &&
+  actual.bytes === expected.bytes &&
+  actual.sha256 === expected.sha256;
+
 const verifyUnsafe = async (
-  artifact: QuiltArtifact,
+  artifact: TranscodeArtifact,
 ): Promise<VerifiedArtifact> => {
+  if (!/^[0-9a-f]{64}$/u.test(artifact.transcodeDigest))
+    throw failure("transcodeDigest", "Transcode digest is invalid");
+  if (
+    !isAbsolute(artifact.rootPath) ||
+    resolve(artifact.rootPath) !== artifact.rootPath ||
+    (await realpath(artifact.rootPath)) !== artifact.rootPath
+  )
+    throw failure(artifact.rootPath, "Artifact root path is not canonical");
   const root = await lstat(artifact.rootPath);
   if (!root.isDirectory() || root.isSymbolicLink())
     throw failure(artifact.rootPath, "Artifact root must be a real directory");
-  if (artifact.indexBytes.byteLength > MAX_INDEX_BYTES)
-    throw failure("index.json", "Supplied index bytes exceed their limit");
-  const indexBytes = await readBounded(
-    join(artifact.rootPath, "index.json"),
-    MAX_INDEX_BYTES,
-  );
+  const expectedIdentifiers = [
+    "master.m3u8",
+    ...artifact.renditions.flatMap((item) => [
+      item.playlist.identifier,
+      item.init.identifier,
+      ...item.segments.map((segment) => segment.identifier),
+    ]),
+  ];
   if (
-    !Buffer.from(indexBytes).equals(Buffer.from(artifact.indexBytes)) ||
-    sha256Hex(indexBytes) !== artifact.indexSha256
-  ) {
-    throw failure("index.json", "Index bytes or digest mismatch");
-  }
-  const index = parseQuiltIndex(indexBytes);
-  if (!Buffer.from(indexBytes).equals(Buffer.from(canonicalIndexBytes(index))))
-    throw failure("index.json", "Index bytes are not canonically serialized");
-  validateMasterPlaylist(
-    await readBounded(
-      join(artifact.rootPath, "master.m3u8"),
-      MAX_PLAYLIST_BYTES,
-    ),
-    index.renditions,
-  );
-  const identifiers = canonicalIdentifiers(index);
-  const actual = (await readdir(artifact.rootPath)).sort();
-  if (actual.join("\0") !== [...identifiers].sort().join("\0"))
+    new Set(expectedIdentifiers).size !== expectedIdentifiers.length ||
+    artifact.files.length !== expectedIdentifiers.length
+  )
+    throw failure(
+      artifact.rootPath,
+      "Artifact descriptors are duplicated or incomplete",
+    );
+  const actualEntries = (
+    await readdir(artifact.rootPath, { withFileTypes: true })
+  )
+    .map((entry) => {
+      if (!entry.isFile() || entry.isSymbolicLink())
+        throw failure(entry.name, "Artifact entries must be regular files");
+      return entry.name;
+    })
+    .sort();
+  if (actualEntries.join("\0") !== [...expectedIdentifiers].sort().join("\0"))
     throw failure(artifact.rootPath, "Artifact inventory mismatch");
-  if (
-    artifact.patchCount !== identifiers.length ||
-    index.patchCount !== identifiers.length ||
-    artifact.patches.length !== identifiers.length
-  ) {
-    throw failure("patchCount", "Patch count mismatch");
+  if (artifact.renditions.length !== RENDITIONS.length)
+    throw failure("renditions", "Rendition set is incomplete");
+  const verifiedFiles: FileDescriptor[] = [];
+  for (let index = 0; index < expectedIdentifiers.length; index += 1) {
+    const identifier = expectedIdentifiers[index]!;
+    const declared = artifact.files[index];
+    if (
+      declared?.identifier !== identifier ||
+      declared.path !== join(artifact.rootPath, identifier)
+    )
+      throw failure(identifier, "File order or path is not canonical");
+    const measured = await inspect(
+      declared.path,
+      identifier.endsWith(".m3u8") ? 1_048_576 : undefined,
+    );
+    const expected: FileDescriptor = { ...declared, ...measured };
+    if (!sameDescriptor(declared, expected))
+      throw failure(identifier, "File size or digest mismatch");
+    const contentType = identifier.endsWith(".m3u8")
+      ? "application/vnd.apple.mpegurl"
+      : "audio/mp4";
+    if (declared.contentType !== contentType)
+      throw failure(identifier, "File content type mismatch");
+    verifiedFiles.push(declared);
   }
-  const declared = new Map(
-    artifact.patches.map((patch) => [patch.identifier, patch]),
+  const canonicalFiles = new Map(
+    verifiedFiles.map((descriptor) => [descriptor.identifier, descriptor]),
   );
-  if (declared.size !== identifiers.length)
-    throw failure("patches", "Patch descriptors are incomplete or duplicated");
-  const verifiedPatches: QuiltPatch[] = [];
-  for (const identifier of identifiers) {
-    const path = join(artifact.rootPath, identifier);
-    const inspected = await inspectAndHash(path);
-    const patch = declared.get(identifier);
+  const canonicalMaster = canonicalFiles.get("master.m3u8");
+  if (
+    canonicalMaster === undefined ||
+    !sameDescriptor(artifact.masterPlaylist, canonicalMaster)
+  )
+    throw failure("master.m3u8", "Master descriptor is not canonical");
+  validateMasterPlaylist(
+    await read(join(artifact.rootPath, "master.m3u8")),
+    artifact.renditions,
+  );
+  const segmentCounts: number[] = [];
+  for (let position = 0; position < artifact.renditions.length; position += 1) {
+    const rendition = artifact.renditions[position]!;
+    const expected = RENDITIONS[position]!;
     if (
-      patch === undefined ||
-      patch.path !== path ||
-      patch.bytes !== inspected.bytes ||
-      patch.sha256 !== inspected.sha256
-    ) {
+      rendition.id !== expected.id ||
+      rendition.nominalBitrate !== expected.nominalBitrate ||
+      rendition.codec !== "mp4a.40.2" ||
+      (rendition.sampleRateHz !== 44_100 &&
+        rendition.sampleRateHz !== 48_000) ||
+      rendition.channels !== 2
+    )
+      throw failure(rendition.id, "Rendition ladder metadata mismatch");
+    const canonicalPlaylist = canonicalFiles.get(`${rendition.id}.m3u8`);
+    const canonicalInit = canonicalFiles.get(`${rendition.id}-init.mp4`);
+    if (
+      canonicalPlaylist === undefined ||
+      canonicalInit === undefined ||
+      !sameDescriptor(rendition.playlist, canonicalPlaylist) ||
+      !sameDescriptor(rendition.init, canonicalInit)
+    )
       throw failure(
-        identifier,
-        "Patch descriptor size, path, or digest mismatch",
+        rendition.id,
+        "Nested rendition descriptors are not canonical",
       );
-    }
-    verifiedPatches.push(patch);
-  }
-  for (const rendition of index.renditions) {
-    const initPatch = declared.get(rendition.init.identifier);
-    if (
-      initPatch?.bytes !== rendition.init.bytes ||
-      initPatch.sha256 !== rendition.init.sha256
-    ) {
-      throw failure(rendition.init.identifier, "Init descriptor mismatch");
-    }
     const playlist = parsePlaintextMediaPlaylist(
-      await readBounded(
-        join(artifact.rootPath, rendition.playlist),
-        MAX_PLAYLIST_BYTES,
-      ),
+      await read(rendition.playlist.path),
     );
     if (
       playlist.mapIdentifier !== rendition.init.identifier ||
-      playlist.segments.length !== rendition.segments.length ||
-      playlist.segments.some(
-        (segment, position) =>
-          segment.identifier !== rendition.segments[position]?.identifier ||
-          segment.durationMs !== rendition.segments[position]?.durationMs,
+      playlist.segments.length !== rendition.segments.length
+    )
+      throw failure(rendition.id, "Playlist descriptor mismatch");
+    for (let sequence = 0; sequence < playlist.segments.length; sequence += 1) {
+      const parsed = playlist.segments[sequence]!;
+      const segment = rendition.segments[sequence]!;
+      const canonicalSegment = canonicalFiles.get(segment.identifier);
+      if (
+        canonicalSegment === undefined ||
+        !sameDescriptor(segment, canonicalSegment) ||
+        segment.sequence !== sequence ||
+        segment.identifier !==
+          `${rendition.id}-${String(sequence).padStart(5, "0")}.m4s` ||
+        parsed.sequence !== segment.sequence ||
+        parsed.identifier !== segment.identifier ||
+        parsed.durationMs !== segment.durationMs
       )
-    ) {
-      throw failure(
-        rendition.playlist,
-        "Playlist does not agree with its index descriptor",
-      );
+        throw failure(segment.identifier, "Segment timeline mismatch");
     }
-    for (const segment of rendition.segments) {
-      const patch = declared.get(segment.identifier);
-      if (patch?.bytes !== segment.bytes || patch.sha256 !== segment.sha256) {
-        throw failure(segment.identifier, "Segment descriptor mismatch");
-      }
-    }
+    const bandwidth = calculateBandwidth(rendition.segments);
+    if (
+      bandwidth.averageBandwidth !== rendition.averageBandwidth ||
+      bandwidth.peakBandwidth !== rendition.peakBandwidth
+    )
+      throw failure(rendition.id, "Stored-byte bandwidth mismatch");
+    segmentCounts.push(rendition.segments.length);
   }
-  return { ...artifact, patches: verifiedPatches, verified: true };
+  if (!segmentCounts.every((count) => count === segmentCounts[0]))
+    throw failure("renditions", "Rendition segment counts differ");
+  if (
+    !artifact.renditions.every(
+      (rendition) =>
+        rendition.sampleRateHz === artifact.renditions[0]?.sampleRateHz,
+    )
+  )
+    throw failure("renditions", "Rendition sample rates differ");
+  for (let sequence = 0; sequence < (segmentCounts[0] ?? 0); sequence += 1) {
+    const durations = artifact.renditions.map(
+      (item) => item.segments[sequence]?.durationMs,
+    );
+    if (!durations.every((duration) => duration === durations[0]))
+      throw failure("renditions", "Rendition timelines differ");
+  }
+  return { ...artifact, files: verifiedFiles, verified: true };
 };
 
 export const verifyArtifact = (
-  artifact: QuiltArtifact,
+  artifact: TranscodeArtifact,
 ): Effect.Effect<VerifiedArtifact, ArtifactValidationError> =>
   Effect.tryPromise({
     try: () => verifyUnsafe(artifact),
