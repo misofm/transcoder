@@ -1,12 +1,12 @@
 const REQUIRED_RENDITIONS = ["aac-96", "aac-160", "aac-256"];
-const BLOB_ID = /^[A-Za-z0-9_-]{43}$/u;
+const BLOB_ID = /^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$/u;
 const MAX_REMOTE_INDEX_BYTES = 4 * 1024 * 1024;
 
-export const buildQuiltPatchUrl = (aggregator, blobId, identifier) => {
+export const buildBlobDeliveryUrl = (origin, blobId, identifier) => {
   if (!BLOB_ID.test(blobId)) throw new TypeError("Invalid Walrus blob ID");
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/u.test(identifier))
     throw new TypeError("Invalid Quilt patch identifier");
-  const url = new URL(aggregator);
+  const url = new URL(origin);
   if (
     url.protocol !== "https:" ||
     url.username !== "" ||
@@ -14,9 +14,9 @@ export const buildQuiltPatchUrl = (aggregator, blobId, identifier) => {
     url.search !== "" ||
     url.hash !== ""
   )
-    throw new TypeError("Aggregator must be a plain HTTPS URL");
+    throw new TypeError("Delivery origin must be a plain HTTPS URL");
   const prefix = url.pathname.replace(/\/+$/u, "");
-  url.pathname = `${prefix}/v1/blobs/by-quilt-id/${blobId}/${identifier}`;
+  url.pathname = `${prefix}/${blobId}/${identifier}`;
   return url.toString();
 };
 
@@ -287,7 +287,7 @@ const bootstrap = () => {
   const quiltInput = document.querySelector("#quilt-input");
   const openButton = document.querySelector("#open-button");
   const remoteForm = document.querySelector("#remote-form");
-  const aggregatorInput = document.querySelector("#aggregator-input");
+  const deliveryOriginInput = document.querySelector("#delivery-origin-input");
   const blobIdInput = document.querySelector("#blob-id-input");
   const streamButton = document.querySelector("#stream-button");
   const consoleElement = document.querySelector(".console");
@@ -399,30 +399,38 @@ const bootstrap = () => {
     releasePlayer();
     deck.hidden = true;
     streamButton.disabled = true;
-    setStatus("working", "Connecting to Walrus", "Loading Quilt index…");
+    setStatus("working", "Connecting to delivery CDN", "Loading Quilt index…");
     try {
-      const aggregator = aggregatorInput.value.trim();
+      const deliveryOrigin = deliveryOriginInput.value.trim();
       const blobId = blobIdInput.value.trim();
-      const indexUrl = buildQuiltPatchUrl(aggregator, blobId, "index.json");
+      const indexUrl = buildBlobDeliveryUrl(
+        deliveryOrigin,
+        blobId,
+        "index.json",
+      );
       const response = await fetch(indexUrl, {
         cache: "no-store",
         credentials: "omit",
         referrerPolicy: "no-referrer",
       });
       if (!response.ok)
-        throw new TypeError(`Aggregator returned HTTP ${response.status}`);
+        throw new TypeError(`Delivery CDN returned HTTP ${response.status}`);
       const indexBytes = await readBoundedResponse(
         response,
         MAX_REMOTE_INDEX_BYTES,
       );
       const index = parseIndex(indexBytes);
       await openPlayback({
-        masterUrl: buildQuiltPatchUrl(aggregator, blobId, index.masterPlaylist),
+        masterUrl: buildBlobDeliveryUrl(
+          deliveryOrigin,
+          blobId,
+          index.masterPlaylist,
+        ),
         index,
         indexBytes,
-        readyLabel: "Streaming from Walrus",
+        readyLabel: "Streaming from R2",
         readyDetail:
-          "The remote index is valid. HLS media is loading directly from the aggregator.",
+          "The remote index is valid. HLS media is loading from the configured delivery origin.",
       });
     } catch (error) {
       releasePlayer();

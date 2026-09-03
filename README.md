@@ -43,7 +43,11 @@ const artifact = await Effect.runPromise(
 
 `finalize` requires no key or nonce. Its generation identity is deterministically derived from the prepared result and recording ID. Repeating the same request verifies and resumes the same generation. `fresh: true` instead fails if that generation already exists. The artifact is independent of any deployment network.
 
-`artifact.quilt.path` points to the complete Walrus Quilt binary. It is ready to pass to a normal blob uploader, for example `walrus store /absolute/path/quilt.blob --epochs 1`; publication remains the caller's responsibility. The binary uses QuiltV1, RS2, and 1,000 shards. Every patch carries only its delivery `content-type` as Walrus-native metadata.
+`artifact.quilt.path` points to the complete Walrus Quilt binary. It is ready to pass to a normal blob uploader, for example `walrus store /absolute/path/quilt.blob --epochs 1`; publication remains the caller's responsibility. The returned Walrus blob ID is the canonical public identity of the transcode package and is suitable for a Record extension.
+
+After uploading that exact `artifact.quilt.path`, call `createR2UploadManifest(verifiedArtifact, blobId)` with the returned blob ID to obtain the deterministic R2 upload plan. It maps every HLS patch to `{blobId}/{identifier}`, assigns its content type and immutable cache policy, excludes `quilt.blob`, includes the source Quilt path/hash as publication evidence, and orders `master.m3u8` last as the publication marker. The uploader must check each file against the manifest while streaming it. The library does not hold R2 credentials or perform uploads. With a custom domain, playback starts at `https://stream.miso.fm/{blobId}/master.m3u8`. `generationDigest` remains deterministic artifact metadata used for local build and resumability; it is not the public package locator.
+
+The binary uses QuiltV1, RS2, and 1,000 shards. Every patch carries only its delivery `content-type` as Walrus-native metadata.
 
 ## Package exports
 
@@ -75,4 +79,4 @@ npm pack --dry-run
 
 FFmpeg and FFprobe 8.1.2 are required and rejected if their versions, build lines, configurations, or libav versions do not match. CI structural, plaintext playback, and byte-level golden conformance run only in LinuxServer's `8.1.2-cli-ls76` image pinned by OCI digest.
 
-Run `bun run player` to open the read-only [Quilt Listening Room](examples/quilt-player/README.md). It can stream a published Quilt directly from a Walrus aggregator or verify and audition a local artifact directory. The example is not included in the npm package and does not add a browser runtime to the server library.
+Run `bun run player` to open the read-only [Quilt Listening Room](examples/quilt-player/README.md). It can stream the R2 delivery copy at `stream.miso.fm/{blobId}` or verify and audition a local artifact directory. The example is not included in the npm package and does not add a browser runtime to the server library.

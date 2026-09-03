@@ -36,6 +36,8 @@ SHA-256(
 
 `index.json.generation` is the canonical unpadded base64url representation of those 32 digest bytes. `QuiltArtifact.generationDigest` is their lowercase hexadecimal representation.
 
+The generation digest is deterministic artifact metadata used to identify local build state; it is not the public package locator. After the serialized Quilt is published, its network-independent Walrus blob ID is the canonical public identity and MAY be stored in a Record extension.
+
 The same verified preparation, recording ID, and toolchain therefore produce the same artifact bytes and generation directory. A repeated finalization verifies and resumes that directory. With `fresh: true`, an existing generation is an error. Deployment network cannot change artifact identity or bytes.
 
 Finalization MUST:
@@ -94,6 +96,14 @@ For `N` aligned segments per rendition, `patchCount = 2 + 3 * (2 + N)` and MUST 
 `quilt.blob` is stored beside the flat patch files in the generation directory but is not itself a Quilt patch. `QuiltArtifact.patches` retains the canonical playback order above. The pinned Walrus encoder sorts the binary Quilt index lexicographically by identifier; this distinct order is exposed as `QuiltArtifact.quilt.patches` with exact start/end columns.
 
 Patch identifiers deliberately contain no `/`. Walrus accepts slash-bearing identifiers and retrieves them when each slash is percent-encoded, but the Quilt-by-identifier HTTP route treats raw slashes as route separators. Standard relative HLS resolution therefore does not produce retrievable URLs for hierarchical identifiers. Flat identifiers allow `master.m3u8`, rendition playlists, init files, and segments to resolve directly through the aggregator without application-specific playlist rewriting.
+
+## R2 delivery copy
+
+An R2 delivery copy uses the canonical Walrus blob ID as its only prefix. Each Quilt patch is stored as a separate object at `{blobId}/{identifier}`; `quilt.blob`, plaintext preparation files, and workspace metadata MUST NOT be copied. The public entrypoint is `{blobId}/master.m3u8`.
+
+Every object has the same `content-type` as its Quilt tag and `Cache-Control: public, max-age=31536000, immutable`. Keys are immutable. The supplied blob ID MUST be the result of uploading the exact Quilt described by the manifest's path, byte length, and SHA-256 evidence. Uploaders MUST verify every source file against the manifest while streaming it, publish every non-master object successfully, and upload `master.m3u8` last. The transcoder exposes this deterministic plan but performs no network requests, R2 writes, Walrus publication, certification, or Record mutation.
+
+The R2 custom domain MUST allow cross-origin `GET` and `HEAD`, allow the `Range` request header, and expose `ETag`, `Content-Length`, `Content-Range`, and `Accept-Ranges`. Because playlists and JSON are not universally cached by extension, deployment MUST configure a cache rule for the immutable blob-ID namespace rather than relying on default extension caching. Public clients MUST not request the master path before publication because CDN negative caching can retain a premature 404.
 
 The strict top-level index fields, in serialization order, are:
 

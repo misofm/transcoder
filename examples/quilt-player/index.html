@@ -20,18 +20,18 @@
     <main>
       <header>
         <h1>Quilt player</h1>
-        <p>Stream a published Walrus Quilt or verify one locally.</p>
+        <p>Stream a published Quilt package or verify one locally.</p>
       </header>
 
       <section class="workbench" aria-labelledby="setup-title">
         <h2 id="setup-title">Stream published Quilt</h2>
 
         <form id="remote-form">
-          <label for="aggregator-input">Aggregator</label>
+          <label for="delivery-origin-input">Delivery origin</label>
           <input
-            id="aggregator-input"
+            id="delivery-origin-input"
             type="url"
-            value="https://aggregator.mainnet.walrus.mirai.cloud"
+            value="https://stream.miso.fm"
             required
           />
           <label for="blob-id-input">Quilt blob ID</label>
@@ -45,7 +45,7 @@
             required
           />
           <button class="primary-action" id="stream-button" type="submit">
-            Stream from Walrus
+            Stream from R2
           </button>
         </form>
 

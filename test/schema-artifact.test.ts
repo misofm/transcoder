@@ -1,11 +1,17 @@
 import { expect, test } from "bun:test";
 import { readFile } from "node:fs/promises";
 
-import { canonicalIdentifiers, canonicalIndexBytes } from "../src/artifact.js";
+import {
+  canonicalIdentifiers,
+  canonicalIndexBytes,
+  createR2UploadManifest,
+  R2_IMMUTABLE_CACHE_CONTROL,
+} from "../src/artifact.js";
 import {
   RENDITIONS,
   SCHEMA_ID,
   type QuiltIndex,
+  type VerifiedArtifact,
   type RenditionDescriptor,
 } from "../src/model.js";
 import { assertQuiltIndex, parseQuiltIndex } from "../src/schema.js";
@@ -70,6 +76,84 @@ test("serializes strict index and canonical patch ordering", () => {
     "aac-256-init.mp4",
     "aac-256-00000.m4s",
   ]);
+});
+
+test("maps a verified artifact to blob-addressed R2 keys with master last", () => {
+  const blobId = "D3hKmYKIYcI_MYjGgBRUc91HqVbUPajk680zsWmmj8I";
+  const patches = canonicalIdentifiers(index).map((identifier) => ({
+    identifier,
+    path: `/artifact/${identifier}`,
+    bytes: 1,
+    sha256: hash,
+    tags: {
+      "content-type": identifier.endsWith(".m3u8")
+        ? "application/vnd.apple.mpegurl"
+        : identifier.endsWith(".json")
+          ? "application/json; charset=utf-8"
+          : "audio/mp4",
+    },
+  }));
+  const artifact = {
+    verified: true,
+    rootPath: "/artifact",
+    indexPath: "/artifact/index.json",
+    indexBytes: canonicalIndexBytes(index),
+    indexSha256: "",
+    patchCount: index.patchCount,
+    patches,
+    quilt: {
+      path: "/artifact/quilt.blob",
+      bytes: 2,
+      sha256: hash,
+    },
+  } as unknown as VerifiedArtifact;
+  Object.assign(artifact, {
+    indexSha256: new Bun.CryptoHasher("sha256")
+      .update(artifact.indexBytes)
+      .digest("hex"),
+  });
+  patches[0] = {
+    ...patches[0]!,
+    bytes: artifact.indexBytes.byteLength,
+    sha256: artifact.indexSha256,
+  };
+  const manifest = createR2UploadManifest(artifact, blobId);
+
+  expect(manifest.entrypointKey).toBe(`${blobId}/master.m3u8`);
+  expect(manifest.objects).toHaveLength(index.patchCount);
+  expect(manifest.objects[0]?.key).toBe(`${blobId}/index.json`);
+  expect(manifest.objects.at(-1)?.key).toBe(`${blobId}/master.m3u8`);
+  expect(
+    manifest.objects.every(
+      (object) => object.cacheControl === R2_IMMUTABLE_CACHE_CONTROL,
+    ),
+  ).toBe(true);
+  expect(
+    manifest.objects.some((object) => object.key.endsWith("quilt.blob")),
+  ).toBe(false);
+  expect(manifest.quilt).toEqual(artifact.quilt);
+  expect(() => createR2UploadManifest(artifact, "not-a-blob-id")).toThrow();
+  expect(() =>
+    createR2UploadManifest(artifact, `${"A".repeat(42)}B`),
+  ).toThrow();
+  expect(() =>
+    createR2UploadManifest(
+      {
+        ...artifact,
+        patches: [
+          ...artifact.patches,
+          {
+            identifier: "../overwrite",
+            path: "/artifact/../overwrite",
+            bytes: -1,
+            sha256: "bad",
+            tags: { "content-type": "application/octet-stream" },
+          },
+        ],
+      },
+      blobId,
+    ),
+  ).toThrow();
 });
 
 test("rejects unknown keys and cross-field mismatches", () => {
