@@ -2,7 +2,7 @@
 
 Status: pre-launch normative contract.
 
-This document defines the canonical public-playback artifact produced by `@misofm/transcoder`. It is a local, deterministic, plaintext AAC-LC fragmented-MP4 HLS ladder. Publication, Walrus Quilt construction, certification, Sui transactions, pointer mutation, and rights policy are caller responsibilities.
+This document defines the canonical public-playback artifact produced by `@misofm/transcoder`. It is a local, deterministic, plaintext AAC-LC fragmented-MP4 HLS ladder serialized as a Walrus Quilt. Publication, certification, Sui transactions, pointer mutation, and rights policy are caller responsibilities.
 
 ## Toolchain and execution
 
@@ -28,7 +28,7 @@ First, `preparedContentDigest` hashes each rendition's ordered playlist, init fi
 
 ```text
 SHA-256(
-  UTF8("miso.transcoder.generation/1\0") ||
+  UTF8("miso.transcoder.walrus-quilt-generation/1\0") ||
   UTF8(preparedContentDigest) ||
   UTF8(recordingId)
 )
@@ -46,7 +46,9 @@ Finalization MUST:
 4. hash bytes while copying, fsync each file, re-hash the source, atomically rename, and fsync the parent directory;
 5. preserve each validated media playlist byte-for-byte;
 6. calculate stored-byte bandwidth, render the master playlist, and canonically serialize `index.json`;
-7. verify the complete promoted artifact before returning it.
+7. assign the canonical delivery tags and serialize all patches with `@mysten/walrus` QuiltV1 using RS2 and 1,000 shards;
+8. atomically include the resulting `quilt.blob` in the generation directory;
+9. verify the complete promoted artifact, re-encode the Quilt, and compare its exact bytes before returning it.
 
 Cancellation aborts outstanding work, joins cleanup, and only then releases the workspace lock. A generation directory is made visible by one atomic directory promotion. Temporary output MUST NOT be treated as resumable output.
 
@@ -89,6 +91,10 @@ The canonical patch order is:
 
 For `N` aligned segments per rendition, `patchCount = 2 + 3 * (2 + N)` and MUST be at most 666.
 
+`quilt.blob` is stored beside the flat patch files in the generation directory but is not itself a Quilt patch. `QuiltArtifact.patches` retains the canonical playback order above. The pinned Walrus encoder sorts the binary Quilt index lexicographically by identifier; this distinct order is exposed as `QuiltArtifact.quilt.patches` with exact start/end columns.
+
+Patch identifiers deliberately contain no `/`. Walrus accepts slash-bearing identifiers and retrieves them when each slash is percent-encoded, but the Quilt-by-identifier HTTP route treats raw slashes as route separators. Standard relative HLS resolution therefore does not produce retrievable URLs for hierarchical identifiers. Flat identifiers allow `master.m3u8`, rendition playlists, init files, and segments to resolve directly through the aggregator without application-specific playlist rewriting.
+
 The strict top-level index fields, in serialization order, are:
 
 ```json
@@ -117,8 +123,14 @@ There are exactly three rendition descriptors. Each has `id`, `codec`, `nominalB
 
 Unknown properties, duplicate JSON keys, unsafe identifiers, duplicate artifact identifiers, noncanonical generation encoding, mismatched patch counts, timelines, bandwidth, sizes, hashes, or rendition ordering are errors.
 
+## Walrus-native metadata
+
+Every patch has exactly one immutable tag. `content-type` is `application/json; charset=utf-8` for the index, `application/vnd.apple.mpegurl` for playlists, and `audio/mp4` for init/media fragments. Mainnet aggregator testing confirms this tag controls the response media type. Cache policy is not tagged because the aggregator applies its own cache-control header.
+
+No recording, rendition, sequence, hash, network, rights, or deployment metadata is duplicated into tags. Those fields are either already canonical in identifiers and `index.json`, or belong to the publishing layer. Keeping tags delivery-only avoids contradictory metadata while allowing aggregators to return useful HTTP headers.
+
 ## Verification and scope
 
-Public `verify` is independent of preparation. It checks the real-directory root, bounded regular files with no symlink traversal, canonical index bytes, exact inventory, deterministic patch order, every patch size/hash, master and media playlist structure, index descriptors, aligned timelines, and calculated bandwidth.
+Public `verify` is independent of preparation. It checks the real-directory root, bounded regular files with no symlink traversal, canonical index bytes, exact recursive inventory, deterministic patch order and tags, every patch size/hash, master and media playlist structure, index descriptors, aligned timelines, calculated bandwidth, Quilt configuration and offsets, and a byte-for-byte deterministic re-encoding of `quilt.blob`.
 
 The artifact is intentionally suitable for public playback and caching. This contract does not grant machine-learning, redistribution, synchronization, or other downstream rights. Machine-readable rights reservations and licensing metadata belong beside the published artifact and are outside transcoding.
