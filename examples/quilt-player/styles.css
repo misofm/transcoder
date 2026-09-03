@@ -60,6 +60,20 @@ button,
 input {
   padding: 7px 9px;
 }
+input[type="url"],
+input[type="text"] {
+  display: block;
+  width: 100%;
+  margin: 4px 0 10px;
+  border: 1px solid #666;
+  color: #eee;
+  background: #000;
+  font: inherit;
+}
+input:focus {
+  border-color: #fff;
+  outline: 1px solid #fff;
+}
 button {
   font: inherit;
   cursor: pointer;
@@ -69,6 +83,10 @@ button:disabled {
 }
 .primary-action {
   margin-top: 12px;
+}
+.divider {
+  margin: 24px 0 12px;
+  color: #999;
 }
 
 .console {

@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { readFile } from "node:fs/promises";
 
 import { canonicalIdentifiers, canonicalIndexBytes } from "../src/artifact.js";
 import {
@@ -42,6 +43,15 @@ const index: QuiltIndex = {
   patchCount: 11,
   renditions,
 };
+
+test("JSON schema permits canonical unpadded rendition identifiers", async () => {
+  const schema = await readFile(
+    new URL("../docs/aac-transcode-quilt-v1.schema.json", import.meta.url),
+    "utf8",
+  );
+  expect(schema).toContain('"pattern": "^aac-[1-9][0-9]{0,4}$"');
+  expect(schema).not.toContain('"pattern": "^aac-[0-9]{3}$"');
+});
 
 test("serializes strict index and canonical patch ordering", () => {
   const bytes = canonicalIndexBytes(index);

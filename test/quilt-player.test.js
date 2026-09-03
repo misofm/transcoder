@@ -2,7 +2,10 @@ import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 
-import { parseIndex } from "../examples/quilt-player/player.js";
+import {
+  buildQuiltPatchUrl,
+  parseIndex,
+} from "../examples/quilt-player/player.js";
 
 describe("static Quilt Listening Room", () => {
   test("rejects the removed encryption field", () => {
@@ -32,6 +35,28 @@ describe("static Quilt Listening Room", () => {
     const integrity = createHash("sha384").update(bundle).digest("base64");
     expect(html).toContain('src="./hls.min.js"');
     expect(html).toContain(`integrity="sha384-${integrity}"`);
-    expect(html).not.toMatch(/https?:\/\//u);
+    expect(html).toContain(
+      'value="https://aggregator.mainnet.walrus.mirai.cloud"',
+    );
+    expect(html).toContain("connect-src blob: https:");
+  });
+
+  test("constructs strict Quilt HTTP patch URLs", () => {
+    const blobId = "A".repeat(43);
+    expect(
+      buildQuiltPatchUrl(
+        "https://aggregator.mainnet.walrus.mirai.cloud/",
+        blobId,
+        "master.m3u8",
+      ),
+    ).toBe(
+      `https://aggregator.mainnet.walrus.mirai.cloud/v1/blobs/by-quilt-id/${blobId}/master.m3u8`,
+    );
+    expect(() =>
+      buildQuiltPatchUrl("http://example.com", blobId, "master.m3u8"),
+    ).toThrow();
+    expect(() =>
+      buildQuiltPatchUrl("https://example.com", blobId, "aac/96.m3u8"),
+    ).toThrow();
   });
 });

@@ -1,4 +1,58 @@
 const REQUIRED_RENDITIONS = ["aac-96", "aac-160", "aac-256"];
+const BLOB_ID = /^[A-Za-z0-9_-]{43}$/u;
+const MAX_REMOTE_INDEX_BYTES = 4 * 1024 * 1024;
+
+export const buildQuiltPatchUrl = (aggregator, blobId, identifier) => {
+  if (!BLOB_ID.test(blobId)) throw new TypeError("Invalid Walrus blob ID");
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/u.test(identifier))
+    throw new TypeError("Invalid Quilt patch identifier");
+  const url = new URL(aggregator);
+  if (
+    url.protocol !== "https:" ||
+    url.username !== "" ||
+    url.password !== "" ||
+    url.search !== "" ||
+    url.hash !== ""
+  )
+    throw new TypeError("Aggregator must be a plain HTTPS URL");
+  const prefix = url.pathname.replace(/\/+$/u, "");
+  url.pathname = `${prefix}/v1/blobs/by-quilt-id/${blobId}/${identifier}`;
+  return url.toString();
+};
+
+const readBoundedResponse = async (response, maximum) => {
+  const declaredLength = Number(response.headers.get("content-length"));
+  if (Number.isFinite(declaredLength) && declaredLength > maximum)
+    throw new TypeError("Remote index.json exceeds the size limit");
+  if (response.body === null) {
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    if (bytes.byteLength > maximum)
+      throw new TypeError("Remote index.json exceeds the size limit");
+    return bytes;
+  }
+  const reader = response.body.getReader();
+  const chunks = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maximum)
+        throw new TypeError("Remote index.json exceeds the size limit");
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
+};
 
 const hex = (bytes) =>
   [...bytes].map((value) => value.toString(16).padStart(2, "0")).join("");
@@ -11,6 +65,9 @@ const exactKeys = (value, keys) =>
   typeof value === "object" &&
   !Array.isArray(value) &&
   Object.keys(value).sort().join("\0") === [...keys].sort().join("\0");
+
+const integerInRange = (value, minimum, maximum) =>
+  Number.isSafeInteger(value) && value >= minimum && value <= maximum;
 
 export const parseIndex = (bytes) => {
   const source = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
@@ -29,7 +86,8 @@ export const parseIndex = (bytes) => {
     !/^0x[0-9a-f]{64}$/u.test(index.recordingId) ||
     !/^[A-Za-z0-9_-]{43}$/u.test(index.generation) ||
     index.masterPlaylist !== "master.m3u8" ||
-    !Number.isSafeInteger(index.patchCount) ||
+    !integerInRange(index.segmentTargetMs, 1_000, 10_000) ||
+    !integerInRange(index.patchCount, 11, 666) ||
     !Array.isArray(index.renditions) ||
     index.renditions.length !== REQUIRED_RENDITIONS.length
   )
@@ -51,14 +109,59 @@ export const parseIndex = (bytes) => {
       ]) ||
       rendition.id !== id ||
       rendition.codec !== "mp4a.40.2" ||
+      rendition.nominalBitrate !== Number(id.slice(4)) * 1_000 ||
+      !integerInRange(rendition.averageBandwidth, 1, 1_000_000) ||
+      !integerInRange(rendition.peakBandwidth, 1, 1_000_000) ||
+      ![44_100, 48_000].includes(rendition.sampleRateHz) ||
+      rendition.channels !== 2 ||
       rendition.playlist !== `${id}.m3u8` ||
       !exactKeys(rendition.init, ["identifier", "bytes", "sha256"]) ||
       rendition.init.identifier !== `${id}-init.mp4` ||
+      !integerInRange(rendition.init.bytes, 1, Number.MAX_SAFE_INTEGER) ||
+      !/^[0-9a-f]{64}$/u.test(rendition.init.sha256) ||
       !Array.isArray(rendition.segments) ||
-      rendition.segments.length === 0
+      !integerInRange(rendition.segments.length, 1, 219)
     )
       throw new TypeError("Malformed rendition descriptor");
+    rendition.segments.forEach((segment, sequence) => {
+      if (
+        !exactKeys(segment, [
+          "sequence",
+          "identifier",
+          "durationMs",
+          "bytes",
+          "sha256",
+        ]) ||
+        segment.sequence !== sequence ||
+        segment.identifier !==
+          `${id}-${String(sequence).padStart(5, "0")}.m4s` ||
+        !integerInRange(segment.durationMs, 1, 10_000) ||
+        !integerInRange(segment.bytes, 1, Number.MAX_SAFE_INTEGER) ||
+        !/^[0-9a-f]{64}$/u.test(segment.sha256)
+      )
+        throw new TypeError("Malformed segment descriptor");
+    });
   });
+  const segmentCount = index.renditions[0].segments.length;
+  if (
+    index.renditions.some(
+      (rendition) => rendition.segments.length !== segmentCount,
+    ) ||
+    index.renditions.some((rendition) =>
+      rendition.segments.some(
+        (segment, sequence) =>
+          segment.durationMs !==
+          index.renditions[0].segments[sequence].durationMs,
+      ),
+    ) ||
+    index.patchCount !==
+      2 +
+        index.renditions.reduce(
+          (total, rendition) => total + 2 + rendition.segments.length,
+          0,
+        )
+  )
+    throw new TypeError("Rendition timelines or patch count are not aligned");
   return index;
 };
 
@@ -183,6 +286,10 @@ const releasePlayer = () => {
 const bootstrap = () => {
   const quiltInput = document.querySelector("#quilt-input");
   const openButton = document.querySelector("#open-button");
+  const remoteForm = document.querySelector("#remote-form");
+  const aggregatorInput = document.querySelector("#aggregator-input");
+  const blobIdInput = document.querySelector("#blob-id-input");
+  const streamButton = document.querySelector("#stream-button");
   const consoleElement = document.querySelector(".console");
   const deck = document.querySelector("#deck");
   const audio = document.querySelector("#audio");
@@ -191,6 +298,82 @@ const bootstrap = () => {
     document.querySelector("#status-label").textContent = label;
     document.querySelector("#status-detail").textContent = detail;
   };
+
+  const openPlayback = async ({
+    masterUrl,
+    index,
+    indexBytes,
+    readyLabel,
+    readyDetail,
+  }) => {
+    if (globalThis.Hls === undefined || !globalThis.Hls.isSupported())
+      throw new TypeError(
+        "This browser does not provide the Media Source support required by hls.js",
+      );
+    hls = new globalThis.Hls({ enableWorker: true });
+    let selectedLevel = -1;
+    let activeLevel = -1;
+    const renderLevels = () => {
+      document.querySelectorAll("#level-strip button").forEach((element) => {
+        const level = Number(element.dataset.level);
+        const selected = level === selectedLevel;
+        element.classList.toggle("is-selected", selected);
+        element.classList.toggle("is-active", level === activeLevel);
+        element.setAttribute("aria-pressed", String(selected));
+      });
+    };
+    hls.on(globalThis.Hls.Events.ERROR, (_event, data) => {
+      if (data.fatal)
+        setStatus("error", "Playback error", `${data.type}: ${data.details}`);
+    });
+    hls.on(globalThis.Hls.Events.LEVEL_SWITCHED, (_event, data) => {
+      activeLevel = data.level;
+      renderLevels();
+    });
+    hls.on(globalThis.Hls.Events.MANIFEST_PARSED, () => {
+      setStatus("success", readyLabel, readyDetail);
+    });
+    document.querySelector("#generation").textContent =
+      `GENERATION ${index.generation.slice(0, 12)}…`;
+    document.querySelector("#recording-id").textContent = index.recordingId;
+    document.querySelector("#rendition-count").textContent = String(
+      index.renditions.length,
+    );
+    document.querySelector("#segment-count").textContent = String(
+      index.renditions[0].segments.length,
+    );
+    document.querySelector("#index-hash").textContent = hex(
+      await sha256(indexBytes),
+    );
+    document.querySelector("#level-strip").replaceChildren(
+      ...[
+        { label: "Auto", level: -1 },
+        ...index.renditions.map((rendition, level) => ({
+          label: rendition.id.replace("aac-", "") + " kbps",
+          level,
+        })),
+      ].map(({ label, level }) => {
+        const item = document.createElement("button");
+        item.type = "button";
+        item.dataset.level = String(level);
+        item.textContent = label;
+        item.addEventListener("click", () => {
+          selectedLevel = level;
+          hls.currentLevel = level;
+          renderLevels();
+        });
+        return item;
+      }),
+    );
+    renderLevels();
+    hls.loadSource(masterUrl);
+    hls.attachMedia(audio);
+    deck.hidden = false;
+    deck.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
+  const queryBlobId = new URL(location.href).searchParams.get("blob");
+  if (queryBlobId !== null) blobIdInput.value = queryBlobId;
 
   quiltInput.addEventListener("change", () => {
     document
@@ -210,6 +393,48 @@ const bootstrap = () => {
   });
   audio.addEventListener("play", () => deck.classList.add("is-playing"));
   audio.addEventListener("pause", () => deck.classList.remove("is-playing"));
+
+  remoteForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    releasePlayer();
+    deck.hidden = true;
+    streamButton.disabled = true;
+    setStatus("working", "Connecting to Walrus", "Loading Quilt index…");
+    try {
+      const aggregator = aggregatorInput.value.trim();
+      const blobId = blobIdInput.value.trim();
+      const indexUrl = buildQuiltPatchUrl(aggregator, blobId, "index.json");
+      const response = await fetch(indexUrl, {
+        cache: "no-store",
+        credentials: "omit",
+        referrerPolicy: "no-referrer",
+      });
+      if (!response.ok)
+        throw new TypeError(`Aggregator returned HTTP ${response.status}`);
+      const indexBytes = await readBoundedResponse(
+        response,
+        MAX_REMOTE_INDEX_BYTES,
+      );
+      const index = parseIndex(indexBytes);
+      await openPlayback({
+        masterUrl: buildQuiltPatchUrl(aggregator, blobId, index.masterPlaylist),
+        index,
+        indexBytes,
+        readyLabel: "Streaming from Walrus",
+        readyDetail:
+          "The remote index is valid. HLS media is loading directly from the aggregator.",
+      });
+    } catch (error) {
+      releasePlayer();
+      setStatus(
+        "error",
+        "Could not stream Quilt",
+        error instanceof Error ? error.message : "Unknown failure",
+      );
+    } finally {
+      streamButton.disabled = false;
+    }
+  });
 
   openButton.addEventListener("click", async () => {
     releasePlayer();
@@ -241,67 +466,14 @@ const bootstrap = () => {
         }),
       );
       objectUrls.push(masterUrl);
-      if (globalThis.Hls === undefined || !globalThis.Hls.isSupported())
-        throw new TypeError(
-          "This browser does not provide the Media Source support required by hls.js",
-        );
-      hls = new globalThis.Hls({ enableWorker: true });
-      hls.on(globalThis.Hls.Events.ERROR, (_event, data) => {
-        if (data.fatal)
-          setStatus("error", "Playback error", `${data.type}: ${data.details}`);
+      await openPlayback({
+        masterUrl,
+        index,
+        indexBytes,
+        readyLabel: "Verified and ready",
+        readyDetail:
+          "Plaintext media matches the sizes and SHA-256 hashes in index.json.",
       });
-      let selectedLevel = -1;
-      let activeLevel = -1;
-      const renderLevels = () => {
-        document.querySelectorAll("#level-strip button").forEach((element) => {
-          const level = Number(element.dataset.level);
-          const selected = level === selectedLevel;
-          element.classList.toggle("is-selected", selected);
-          element.classList.toggle("is-active", level === activeLevel);
-          element.setAttribute("aria-pressed", String(selected));
-        });
-      };
-      hls.on(globalThis.Hls.Events.LEVEL_SWITCHED, (_event, data) => {
-        activeLevel = data.level;
-        renderLevels();
-      });
-      hls.loadSource(masterUrl);
-      hls.attachMedia(audio);
-      document.querySelector("#generation").textContent =
-        `GENERATION ${index.generation.slice(0, 12)}…`;
-      document.querySelector("#recording-id").textContent = index.recordingId;
-      document.querySelector("#rendition-count").textContent = String(
-        index.renditions.length,
-      );
-      document.querySelector("#segment-count").textContent = String(
-        index.renditions[0].segments.length,
-      );
-      document.querySelector("#index-hash").textContent = hex(
-        await sha256(indexBytes),
-      );
-      document.querySelector("#level-strip").replaceChildren(
-        ...[
-          { label: "Auto", level: -1 },
-          ...index.renditions.map((rendition, level) => ({
-            label: rendition.id.replace("aac-", "") + " kbps",
-            level,
-          })),
-        ].map(({ label, level }) => {
-          const item = document.createElement("button");
-          item.type = "button";
-          item.dataset.level = String(level);
-          item.textContent = label;
-          item.addEventListener("click", () => {
-            selectedLevel = level;
-            hls.currentLevel = level;
-            renderLevels();
-          });
-          return item;
-        }),
-      );
-      renderLevels();
-      deck.hidden = false;
-      deck.scrollIntoView({ behavior: "smooth", block: "start" });
       setStatus(
         "success",
         "Verified and ready",

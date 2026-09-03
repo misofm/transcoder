@@ -75,4 +75,4 @@ npm pack --dry-run
 
 FFmpeg and FFprobe 8.1.2 are required and rejected if their versions, build lines, configurations, or libav versions do not match. CI structural, plaintext playback, and byte-level golden conformance run only in LinuxServer's `8.1.2-cli-ls76` image pinned by OCI digest.
 
-Run `bun run player` to open the local-only [Quilt Listening Room](examples/quilt-player/README.md), select a plaintext artifact directory, verify it, and audition its three renditions. The example is not included in the npm package and does not add a browser runtime to the server library.
+Run `bun run player` to open the read-only [Quilt Listening Room](examples/quilt-player/README.md). It can stream a published Quilt directly from a Walrus aggregator or verify and audition a local artifact directory. The example is not included in the npm package and does not add a browser runtime to the server library.

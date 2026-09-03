@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'none'; script-src 'self'; style-src 'self'; media-src blob:; connect-src blob:; worker-src blob:; img-src data:; font-src 'none'; base-uri 'none'; form-action 'none'"
+      content="default-src 'none'; script-src 'self'; style-src 'self'; media-src blob: https:; connect-src blob: https:; worker-src blob:; img-src data:; font-src 'none'; base-uri 'none'; form-action 'none'"
     />
     <title>Quilt player</title>
     <link rel="stylesheet" href="./styles.css" />
@@ -20,11 +20,36 @@
     <main>
       <header>
         <h1>Quilt player</h1>
-        <p>Local verifier and audio player. No files are uploaded.</p>
+        <p>Stream a published Walrus Quilt or verify one locally.</p>
       </header>
 
       <section class="workbench" aria-labelledby="setup-title">
-        <h2 id="setup-title">Open artifact</h2>
+        <h2 id="setup-title">Stream published Quilt</h2>
+
+        <form id="remote-form">
+          <label for="aggregator-input">Aggregator</label>
+          <input
+            id="aggregator-input"
+            type="url"
+            value="https://aggregator.mainnet.walrus.mirai.cloud"
+            required
+          />
+          <label for="blob-id-input">Quilt blob ID</label>
+          <input
+            id="blob-id-input"
+            type="text"
+            inputmode="text"
+            autocomplete="off"
+            spellcheck="false"
+            placeholder="43-character Walrus blob ID"
+            required
+          />
+          <button class="primary-action" id="stream-button" type="submit">
+            Stream from Walrus
+          </button>
+        </form>
+
+        <p class="divider">or open a local generation directory</p>
 
         <label class="drop-zone" id="drop-zone">
           <input
@@ -49,9 +74,9 @@
       <section class="console" aria-live="polite" aria-atomic="true">
         <div class="status-light" id="status-light"></div>
         <div>
-          <p class="status-label" id="status-label">Waiting for a Quilt</p>
+          <p class="status-label" id="status-label">Waiting for a source</p>
           <p class="status-detail" id="status-detail">
-            Nothing leaves this browser tab.
+            Enter a Quilt blob ID or choose a local directory.
           </p>
         </div>
       </section>
@@ -88,7 +113,7 @@
 
     <footer>
       <p>
-        Developer audition only. This page does not publish the selected Quilt.
+        Developer audition only. This page reads but never publishes Quilts.
       </p>
     </footer>
   </body>
