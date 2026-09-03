@@ -23,7 +23,7 @@ export const WORKSPACE_SCHEMA = "miso.transcoder-workspace/1" as const;
 export interface WorkspaceState {
   readonly schema: typeof WORKSPACE_SCHEMA;
   readonly prepareDigest?: string;
-  readonly generationDigest?: string;
+  readonly transcodeDigest?: string;
 }
 
 const io = (subject: string, message: string): WorkspaceIoError =>
@@ -142,7 +142,7 @@ const digest = (value: unknown): value is string =>
 
 export const parseWorkspaceState = (text: string): WorkspaceState => {
   try {
-    for (const key of ["schema", "prepareDigest", "generationDigest"])
+    for (const key of ["schema", "prepareDigest", "transcodeDigest"])
       if (
         Array.from(text.matchAll(new RegExp(`"${key}"\\s*:`, "gu"))).length > 1
       )
@@ -154,12 +154,12 @@ export const parseWorkspaceState = (text: string): WorkspaceState => {
     const keys = Object.keys(item);
     if (
       keys.some(
-        (key) => !["schema", "prepareDigest", "generationDigest"].includes(key),
+        (key) => !["schema", "prepareDigest", "transcodeDigest"].includes(key),
       ) ||
       item["schema"] !== WORKSPACE_SCHEMA ||
       (item["prepareDigest"] !== undefined && !digest(item["prepareDigest"])) ||
-      (item["generationDigest"] !== undefined &&
-        !digest(item["generationDigest"]))
+      (item["transcodeDigest"] !== undefined &&
+        !digest(item["transcodeDigest"]))
     ) {
       throw new TypeError();
     }
@@ -168,9 +168,9 @@ export const parseWorkspaceState = (text: string): WorkspaceState => {
       ...(item["prepareDigest"] === undefined
         ? {}
         : { prepareDigest: item["prepareDigest"] as string }),
-      ...(item["generationDigest"] === undefined
+      ...(item["transcodeDigest"] === undefined
         ? {}
-        : { generationDigest: item["generationDigest"] as string }),
+        : { transcodeDigest: item["transcodeDigest"] as string }),
     };
   } catch {
     throw io("workspace.json", "Workspace checkpoint is invalid");

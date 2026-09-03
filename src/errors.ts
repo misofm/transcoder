@@ -73,12 +73,12 @@ export class WorkspaceIoError extends Data.TaggedError("WorkspaceIoError")<
   FailureFields<"WORKSPACE_IO">
 > {}
 
-export class PatchLimitExceededError extends Data.TaggedError(
-  "PatchLimitExceededError",
+export class SegmentLimitExceededError extends Data.TaggedError(
+  "SegmentLimitExceededError",
 )<
-  FailureFields<"PATCH_LIMIT_EXCEEDED"> & {
-    readonly patchCount: number;
-    readonly patchLimit: number;
+  FailureFields<"SEGMENT_LIMIT_EXCEEDED"> & {
+    readonly segmentCount: number;
+    readonly segmentLimit: number;
   }
 > {}
 

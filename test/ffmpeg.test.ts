@@ -122,9 +122,9 @@ test("builds the frozen single-process aligned AAC ladder argv", () => {
       "-sn",
       "-dn",
       "-filter_complex",
-      "[0:a:0]pan=stereo|c0=c0|c1=c0,aresample=44100:async=0:first_pts=0,asetpts=N/SR/TB,asplit=3[aac096][aac160][aac256]",
+      "[0:a:0]pan=stereo|c0=c0|c1=c0,aresample=44100:async=0:first_pts=0,asetpts=N/SR/TB,asplit=3[aac96][aac160][aac256]",
       "-map",
-      "[aac096]",
+      "[aac96]",
       "-map",
       "[aac160]",
       "-map",
@@ -166,7 +166,7 @@ test("builds the frozen single-process aligned AAC ladder argv", () => {
       "-master_pl_name",
       "master.m3u8",
       "-var_stream_map",
-      "a:0,name:aac-096 a:1,name:aac-160 a:2,name:aac-256",
+      "a:0,name:aac-96 a:1,name:aac-160 a:2,name:aac-256",
       "-progress",
       "pipe:3",
       "-nostats",
@@ -254,13 +254,13 @@ test("parses a supported mono source and rejects ambiguous or surround audio", (
 
 test("structural preview validation permits finite decoded overshoot", async () => {
   const root = await mkdtemp(join(await temporaryRoot, "transcoder-pcm-"));
-  const playlistPath = join(root, "aac-096.m3u8");
+  const playlistPath = join(root, "aac-96.m3u8");
   await writeFile(
     playlistPath,
-    '#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:1\n#EXT-X-PLAYLIST-TYPE:VOD\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-MAP:URI="aac-096-init.mp4"\n#EXTINF:1.000,\naac-096-00000.m4s\n#EXT-X-ENDLIST\n',
+    '#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:1\n#EXT-X-PLAYLIST-TYPE:VOD\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-MAP:URI="aac-96-init.mp4"\n#EXTINF:1.000,\naac-96-00000.m4s\n#EXT-X-ENDLIST\n',
   );
-  await writeFile(join(root, "aac-096-init.mp4"), "i");
-  await writeFile(join(root, "aac-096-00000.m4s"), "s");
+  await writeFile(join(root, "aac-96-init.mp4"), "i");
+  await writeFile(join(root, "aac-96-00000.m4s"), "s");
   const timeline = new TextEncoder().encode(
     JSON.stringify({
       streams: [

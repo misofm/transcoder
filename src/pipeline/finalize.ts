@@ -13,22 +13,18 @@ import { basename, join } from "node:path";
 
 import { Effect } from "effect";
 
-import { canonicalIndexBytes, sha256Hex } from "../artifact.js";
 import { ArtifactValidationError, WorkspaceIoError } from "../errors.js";
 import { calculateBandwidth } from "../hls/bandwidth.js";
 import { renderMasterPlaylist } from "../hls/master.js";
 import { parsePlaintextMediaPlaylist } from "../hls/playlist.js";
 import {
   RENDITIONS,
-  SCHEMA_ID,
+  type FileDescriptor,
   type FinalizeRequest,
-  type QuiltArtifact,
-  type QuiltIndex,
-  type QuiltPatch,
   type RenditionDescriptor,
+  type SegmentDescriptor,
+  type TranscodeArtifact,
 } from "../model.js";
-import { patchCountForSegments } from "../profile.js";
-import { parseQuiltIndex } from "../schema.js";
 import {
   assertNoSymlinkComponentsPromise,
   atomicWriteFilePromise,
@@ -38,13 +34,15 @@ import { verifyArtifact } from "./verify.js";
 
 const MAX_ARTIFACT_FILE_BYTES = 256 * 1024 * 1024;
 const MAX_FILE_CONCURRENCY = 16;
+const PLAYLIST_CONTENT_TYPE = "application/vnd.apple.mpegurl" as const;
+const AUDIO_CONTENT_TYPE = "audio/mp4" as const;
 
 const throwIfAborted = (signal: AbortSignal): void => {
   if (signal.aborted)
     throw new DOMException("Operation interrupted", "AbortError");
 };
 
-const artifactError = (subject: string, message: string) =>
+const failure = (subject: string, message: string) =>
   new ArtifactValidationError({
     code: "ARTIFACT_VALIDATION",
     phase: "finalize",
@@ -52,37 +50,52 @@ const artifactError = (subject: string, message: string) =>
     message,
   });
 
-const writeAtomic = async (path: string, bytes: Uint8Array): Promise<void> => {
-  await atomicWriteFilePromise(path, bytes);
-};
-
 const removeTree = async (path: string): Promise<void> => {
   try {
-    const entries = await readdir(path, { withFileTypes: true });
-    for (const entry of entries) {
+    for (const entry of await readdir(path, { withFileTypes: true })) {
       const child = join(path, entry.name);
       if (entry.isDirectory()) await removeTree(child);
       else await unlink(child);
     }
     await rmdir(path);
   } catch {
-    // Cleanup must not replace the original typed failure.
+    /* cleanup must not hide the original failure */
   }
 };
 
-const generationDigest = (
-  request: FinalizeRequest,
-  contentDigest: string,
-): string => {
-  const hash = createHash("sha256");
-  hash.update("miso.transcoder.generation/1\0");
-  hash.update(contentDigest, "utf8");
-  hash.update(request.recordingId, "utf8");
-  return hash.digest("hex");
+const inspectAndHash = async (
+  path: string,
+): Promise<{ bytes: number; sha256: string }> => {
+  const handle = await open(
+    path,
+    constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0),
+  );
+  try {
+    const metadata = await handle.stat();
+    if (
+      !metadata.isFile() ||
+      metadata.size < 1 ||
+      metadata.size > MAX_ARTIFACT_FILE_BYTES
+    )
+      throw new RangeError("artifact file outside bounds");
+    const hash = createHash("sha256");
+    let bytes = 0;
+    for await (const chunk of handle.createReadStream({
+      autoClose: false,
+      highWaterMark: 64 * 1024,
+    })) {
+      bytes += chunk.byteLength;
+      if (bytes > metadata.size)
+        throw new RangeError("artifact file grew while hashing");
+      hash.update(chunk);
+    }
+    if (bytes !== metadata.size)
+      throw new RangeError("artifact file changed while hashing");
+    return { bytes, sha256: hash.digest("hex") };
+  } finally {
+    await handle.close();
+  }
 };
-
-const generationIdentity = (digest: string): string =>
-  Buffer.from(digest, "hex").toString("base64url");
 
 const readBounded = async (
   path: string,
@@ -98,87 +111,21 @@ const readBounded = async (
       throw new RangeError("file outside bounds");
     const bytes = Buffer.allocUnsafe(metadata.size);
     let offset = 0;
-    while (offset < bytes.byteLength) {
-      const { bytesRead } = await handle.read(
+    while (offset < bytes.length) {
+      const result = await handle.read(
         bytes,
         offset,
-        bytes.byteLength - offset,
+        bytes.length - offset,
         null,
       );
-      if (bytesRead === 0)
-        throw new RangeError("file shrank during bounded read");
-      offset += bytesRead;
+      if (result.bytesRead === 0)
+        throw new RangeError("file changed during read");
+      offset += result.bytesRead;
     }
-    if ((await handle.read(Buffer.alloc(1), 0, 1, null)).bytesRead !== 0)
-      throw new RangeError("file grew during bounded read");
     return bytes;
   } finally {
     await handle.close();
   }
-};
-
-const inspectAndHash = async (
-  path: string,
-): Promise<{ readonly bytes: number; readonly sha256: string }> => {
-  const handle = await open(
-    path,
-    constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0),
-  );
-  try {
-    const metadata = await handle.stat();
-    if (
-      !metadata.isFile() ||
-      metadata.size < 1 ||
-      metadata.size > MAX_ARTIFACT_FILE_BYTES
-    )
-      throw new RangeError("patch outside bounds");
-    const hash = createHash("sha256");
-    let bytes = 0;
-    for await (const chunk of handle.createReadStream({
-      autoClose: false,
-      highWaterMark: 64 * 1024,
-    })) {
-      bytes += chunk.byteLength;
-      if (bytes > metadata.size)
-        throw new RangeError("patch grew while hashing");
-      hash.update(chunk);
-    }
-    if (bytes !== metadata.size)
-      throw new RangeError("patch changed while hashing");
-    return { bytes: metadata.size, sha256: hash.digest("hex") };
-  } finally {
-    await handle.close();
-  }
-};
-
-const preparedContentDigest = async (
-  rootPath: string,
-  signal: AbortSignal,
-): Promise<string> => {
-  const identifiers: string[] = [];
-  for (const rendition of RENDITIONS) {
-    const playlistName = `${rendition.id}.m3u8`;
-    const playlist = parsePlaintextMediaPlaylist(
-      await readBounded(join(rootPath, playlistName), 1_048_576),
-    );
-    identifiers.push(
-      playlistName,
-      playlist.mapIdentifier,
-      ...playlist.segments.map((segment) => segment.identifier),
-    );
-  }
-  const hash = createHash("sha256");
-  hash.update("miso.transcoder.prepared-content/1\0");
-  for (const identifier of identifiers) {
-    throwIfAborted(signal);
-    const file = await inspectAndHash(join(rootPath, identifier));
-    hash.update(identifier, "utf8");
-    hash.update("\0");
-    hash.update(String(file.bytes), "utf8");
-    hash.update("\0");
-    hash.update(file.sha256, "utf8");
-  }
-  return hash.digest("hex");
 };
 
 export type FileCopyTransition = "file-fsync" | "rename" | "parent-fsync";
@@ -192,6 +139,7 @@ export const copyFileAtomic = async (
     readonly afterTransition?: (
       transition: FileCopyTransition,
     ) => void | Promise<void>;
+    readonly afterChunk?: (copiedBytes: number) => void | Promise<void>;
   } = {},
 ): Promise<{ readonly bytes: number; readonly sha256: string }> => {
   throwIfAborted(signal);
@@ -221,12 +169,7 @@ export const copyFileAtomic = async (
     const buffer = Buffer.allocUnsafe(64 * 1024);
     while (true) {
       throwIfAborted(signal);
-      const { bytesRead } = await input.read(
-        buffer,
-        0,
-        buffer.byteLength,
-        null,
-      );
+      const { bytesRead } = await input.read(buffer, 0, buffer.length, null);
       if (bytesRead === 0) break;
       copiedBytes += bytesRead;
       if (copiedBytes > metadata.size)
@@ -240,10 +183,10 @@ export const copyFileAtomic = async (
           bytesRead - written,
           null,
         );
-        if (result.bytesWritten === 0)
-          throw new RangeError("destination accepted a short write");
+        if (result.bytesWritten === 0) throw new RangeError("short write");
         written += result.bytesWritten;
       }
+      await hooks.afterChunk?.(copiedBytes);
     }
     if (copiedBytes !== metadata.size)
       throw new RangeError("source shrank during copy");
@@ -251,7 +194,6 @@ export const copyFileAtomic = async (
     await hooks.afterTransition?.("file-fsync");
   } catch (error) {
     await output?.close().catch(() => undefined);
-    output = undefined;
     await input.close().catch(() => undefined);
     await unlink(temporary).catch(() => undefined);
     throw error;
@@ -261,11 +203,8 @@ export const copyFileAtomic = async (
   }
   try {
     const copied = { bytes: copiedBytes, sha256: hash.digest("hex") };
-    const currentSource = await inspectAndHash(sourcePath);
-    if (
-      currentSource.bytes !== copied.bytes ||
-      currentSource.sha256 !== copied.sha256
-    )
+    const current = await inspectAndHash(sourcePath);
+    if (current.bytes !== copied.bytes || current.sha256 !== copied.sha256)
       throw new Error("source changed during copy");
     throwIfAborted(signal);
     await rename(temporary, destinationPath);
@@ -284,121 +223,122 @@ export const copyFileAtomic = async (
   }
 };
 
-const generationCheckpointBytes = (
-  digest: string,
-  contentDigest: string,
-  request: FinalizeRequest,
-  patches: readonly QuiltPatch[],
-): Uint8Array =>
-  new TextEncoder().encode(
-    `${JSON.stringify(
-      {
-        schema: "miso.transcoder-generation/1",
-        generationDigest: digest,
-        prepareDigest: request.prepared.prepareDigest,
-        resultDigest: request.prepared.resultDigest,
-        contentDigest,
-        generation: generationIdentity(digest),
-        recordingId: request.recordingId,
-        toolchainSha256: request.prepared.toolchain.sha256,
-        patches: patches.map(({ identifier, bytes, sha256 }) => ({
-          identifier,
-          bytes,
-          sha256,
-        })),
-      },
-      null,
-      2,
-    )}\n`,
-  );
-
-const loadExistingArtifact = async (
+const descriptor = (
   rootPath: string,
-  digest: string,
-  contentDigest: string,
+  identifier: string,
+  measured: { bytes: number; sha256: string },
+): FileDescriptor => ({
+  identifier,
+  path: join(rootPath, identifier),
+  contentType: identifier.endsWith(".m3u8")
+    ? PLAYLIST_CONTENT_TYPE
+    : AUDIO_CONTENT_TYPE,
+  ...measured,
+});
+
+const buildArtifact = async (
+  rootPath: string,
+  transcodeDigest: string,
   request: FinalizeRequest,
-): Promise<QuiltArtifact | undefined> => {
-  try {
-    const indexBytes = await readBounded(
-      join(rootPath, "index.json"),
-      4_194_304,
+): Promise<TranscodeArtifact> => {
+  const renditions: RenditionDescriptor[] = [];
+  for (const rendition of RENDITIONS) {
+    const playlistIdentifier = `${rendition.id}.m3u8`;
+    const parsed = parsePlaintextMediaPlaylist(
+      await readBounded(join(rootPath, playlistIdentifier), 1_048_576),
     );
-    const index = parseQuiltIndex(indexBytes);
-    if (
-      index.generation !== generationIdentity(digest) ||
-      index.recordingId !== request.recordingId
-    )
-      throw artifactError(
-        rootPath,
-        "Existing generation does not match this finalization request",
-      );
-    const identifiers = [
-      "index.json",
-      "master.m3u8",
-      ...index.renditions.flatMap((rendition) => [
-        rendition.playlist,
-        rendition.init.identifier,
-        ...rendition.segments.map((segment) => segment.identifier),
-      ]),
-    ];
-    const patches: QuiltPatch[] = [];
-    for (const identifier of identifiers) {
-      const path = join(rootPath, identifier);
-      const inspected = await inspectAndHash(path);
-      patches.push({ identifier, path, ...inspected });
-    }
-    const artifact: QuiltArtifact = {
-      generationDigest: digest,
+    const playlist = descriptor(
       rootPath,
-      indexPath: join(rootPath, "index.json"),
-      indexBytes,
-      indexSha256: sha256Hex(indexBytes),
-      patchCount: identifiers.length,
-      patches,
-      toolchain: request.prepared.toolchain,
-    };
-    const verified = await Effect.runPromise(verifyArtifact(artifact));
-    try {
-      const checkpoint = await readBounded(
-        join(rootPath, "..", `${digest}.json`),
-        4_194_304,
-      );
-      const expected = generationCheckpointBytes(
-        digest,
-        contentDigest,
-        request,
-        verified.patches,
-      );
-      if (!Buffer.from(checkpoint).equals(Buffer.from(expected)))
-        throw artifactError(
+      playlistIdentifier,
+      await inspectAndHash(join(rootPath, playlistIdentifier)),
+    );
+    const init = descriptor(
+      rootPath,
+      parsed.mapIdentifier,
+      await inspectAndHash(join(rootPath, parsed.mapIdentifier)),
+    );
+    const segments: SegmentDescriptor[] = [];
+    for (const segment of parsed.segments) {
+      segments.push({
+        ...descriptor(
           rootPath,
-          "Existing generation checkpoint does not match artifact bytes",
-        );
-    } catch (error) {
-      if (
-        !(error instanceof Error && "code" in error && error.code === "ENOENT")
-      )
-        throw error;
+          segment.identifier,
+          await inspectAndHash(join(rootPath, segment.identifier)),
+        ),
+        contentType: AUDIO_CONTENT_TYPE,
+        sequence: segment.sequence,
+        durationMs: segment.durationMs,
+      });
     }
-    return verified;
-  } catch (error) {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT")
-      return undefined;
-    throw error;
+    renditions.push({
+      id: rendition.id,
+      codec: "mp4a.40.2",
+      nominalBitrate: rendition.nominalBitrate,
+      ...calculateBandwidth(segments),
+      sampleRateHz: request.prepared.sampleRateHz,
+      channels: 2,
+      playlist,
+      init,
+      segments,
+    });
   }
+  const masterPlaylist = descriptor(
+    rootPath,
+    "master.m3u8",
+    await inspectAndHash(join(rootPath, "master.m3u8")),
+  );
+  const files = [
+    masterPlaylist,
+    ...renditions.flatMap((item) => [
+      item.playlist,
+      item.init,
+      ...item.segments,
+    ]),
+  ];
+  return {
+    transcodeDigest,
+    rootPath,
+    segmentTargetMs: request.prepared.segmentTargetMs,
+    masterPlaylist,
+    files,
+    renditions,
+    toolchain: request.prepared.toolchain,
+    audio: request.prepared.audio,
+  };
+};
+
+const transcodeIdentity = async (request: FinalizeRequest): Promise<string> => {
+  const hash = createHash("sha256");
+  hash.update("miso.transcoder.hls-artifact/1\0");
+  hash.update(request.prepared.resultDigest);
+  for (const rendition of RENDITIONS) {
+    const parsed = parsePlaintextMediaPlaylist(
+      await readBounded(
+        join(request.prepared.rootPath, `${rendition.id}.m3u8`),
+        1_048_576,
+      ),
+    );
+    for (const identifier of [
+      `${rendition.id}.m3u8`,
+      parsed.mapIdentifier,
+      ...parsed.segments.map((item) => item.identifier),
+    ]) {
+      const value = await inspectAndHash(
+        join(request.prepared.rootPath, identifier),
+      );
+      hash.update(`\0${identifier}\0${value.bytes}\0${value.sha256}`);
+    }
+  }
+  return hash.digest("hex");
 };
 
 const finalizeUnsafe = async (
   request: FinalizeRequest,
   concurrency: number,
   signal: AbortSignal,
-): Promise<QuiltArtifact> => {
+): Promise<TranscodeArtifact> => {
   throwIfAborted(signal);
-  const contentDigest = await preparedContentDigest(
-    request.prepared.rootPath,
-    signal,
-  );
-  const digest = generationDigest(request, contentDigest);
+  const transcodeDigest = await transcodeIdentity(request);
   const generations = join(
     request.prepared.rootPath,
     "..",
@@ -408,150 +348,104 @@ const finalizeUnsafe = async (
   await assertNoSymlinkComponentsPromise(join(generations, ".."));
   await mkdir(generations, { recursive: true, mode: 0o700 });
   await chmod(generations, 0o700);
-  await assertNoSymlinkComponentsPromise(generations);
-  const target = join(generations, digest);
-  const existing = await loadExistingArtifact(
-    target,
-    digest,
-    contentDigest,
-    request,
-  );
-  if (existing !== undefined) {
+  const target = join(generations, transcodeDigest);
+  try {
+    const existing = await buildArtifact(target, transcodeDigest, request);
     if (request.fresh === true)
-      throw artifactError(target, "Fresh finalization requires a new request");
-    await writeAtomic(
-      join(generations, `${digest}.json`),
-      generationCheckpointBytes(
-        digest,
-        contentDigest,
-        request,
-        existing.patches,
-      ),
-    );
-    return existing;
+      throw failure(target, "Fresh transcode requires explicit cleanup");
+    return await Effect.runPromise(verifyArtifact(existing));
+  } catch (error) {
+    if (!(error instanceof Error && "code" in error && error.code === "ENOENT"))
+      throw error;
   }
   const temporary = join(
     generations,
     `.tmp-${process.pid}-${randomBytes(8).toString("hex")}`,
   );
   await mkdir(temporary, { mode: 0o700 });
-  const renditionDescriptors: RenditionDescriptor[] = [];
   try {
+    const copyIdentifiers: string[] = [];
+    const descriptors: RenditionDescriptor[] = [];
     for (const rendition of RENDITIONS) {
-      const playlistName = `${rendition.id}.m3u8`;
+      const playlistIdentifier = `${rendition.id}.m3u8`;
       const playlistBytes = await readBounded(
-        join(request.prepared.rootPath, playlistName),
+        join(request.prepared.rootPath, playlistIdentifier),
         1_048_576,
       );
-      const playlist = parsePlaintextMediaPlaylist(playlistBytes);
-      if (playlist.mapIdentifier !== `${rendition.id}-init.mp4`)
-        throw artifactError(playlistName, "Unexpected init identifier");
-      throwIfAborted(signal);
-      const records = await Effect.runPromise(
+      const parsed = parsePlaintextMediaPlaylist(playlistBytes);
+      copyIdentifiers.push(
+        parsed.mapIdentifier,
+        ...parsed.segments.map((item) => item.identifier),
+      );
+      await atomicWriteFilePromise(
+        join(temporary, playlistIdentifier),
+        playlistBytes,
+      );
+      // Only the master renderer needs rendition metadata; hashes are rebuilt after promotion.
+      const segments = await Effect.runPromise(
         Effect.forEach(
-          playlist.segments,
+          parsed.segments,
           (segment) =>
-            Effect.tryPromise({
-              try: async () => ({
-                sequence: segment.sequence,
-                identifier: segment.identifier,
-                durationMs: segment.durationMs,
-                ...(await copyFileAtomic(
-                  join(request.prepared.rootPath, segment.identifier),
-                  join(temporary, segment.identifier),
-                  signal,
-                )),
-              }),
-              catch: () =>
-                artifactError(
-                  segment.identifier,
-                  "Segment copy or verification failed",
-                ),
-            }),
+            Effect.promise(async () => ({
+              sequence: segment.sequence,
+              identifier: segment.identifier,
+              path: join(target, segment.identifier),
+              contentType: AUDIO_CONTENT_TYPE,
+              durationMs: segment.durationMs,
+              ...(await inspectAndHash(
+                join(request.prepared.rootPath, segment.identifier),
+              )),
+            })),
           { concurrency },
         ),
       );
-      const init = await copyFileAtomic(
-        join(request.prepared.rootPath, playlist.mapIdentifier),
-        join(temporary, playlist.mapIdentifier),
-        signal,
-      );
-      await writeAtomic(join(temporary, playlistName), playlistBytes);
-      const bandwidth = calculateBandwidth(records);
-      renditionDescriptors.push({
+      descriptors.push({
         id: rendition.id,
         codec: "mp4a.40.2",
         nominalBitrate: rendition.nominalBitrate,
-        ...bandwidth,
+        ...calculateBandwidth(segments),
         sampleRateHz: request.prepared.sampleRateHz,
         channels: 2,
-        playlist: playlistName,
-        init: { identifier: playlist.mapIdentifier, ...init },
-        segments: records,
+        playlist: descriptor(
+          target,
+          playlistIdentifier,
+          await inspectAndHash(
+            join(request.prepared.rootPath, playlistIdentifier),
+          ),
+        ),
+        init: descriptor(
+          target,
+          parsed.mapIdentifier,
+          await inspectAndHash(
+            join(request.prepared.rootPath, parsed.mapIdentifier),
+          ),
+        ),
+        segments,
       });
     }
-    const segmentCounts = renditionDescriptors.map(
-      (rendition) => rendition.segments.length,
+    await Effect.runPromise(
+      Effect.forEach(
+        copyIdentifiers,
+        (identifier) =>
+          Effect.promise(() =>
+            copyFileAtomic(
+              join(request.prepared.rootPath, identifier),
+              join(temporary, identifier),
+              signal,
+            ),
+          ),
+        { concurrency },
+      ),
     );
-    if (!segmentCounts.every((count) => count === segmentCounts[0]))
-      throw artifactError("renditions", "Segment counts are not aligned");
-    if ((await preparedContentDigest(temporary, signal)) !== contentDigest)
-      throw artifactError(
-        request.prepared.rootPath,
-        "Prepared content changed during finalization",
-      );
-    const patchCount = patchCountForSegments(segmentCounts[0] ?? 0);
-    const index: QuiltIndex = {
-      schema: SCHEMA_ID,
-      recordingId: request.recordingId,
-      generation: generationIdentity(digest),
-      masterPlaylist: "master.m3u8",
-      segmentTargetMs: request.prepared.segmentTargetMs,
-      patchCount,
-      renditions: renditionDescriptors,
-    };
-    const masterBytes = renderMasterPlaylist(renditionDescriptors);
-    await writeAtomic(join(temporary, "master.m3u8"), masterBytes);
-    const indexBytes = canonicalIndexBytes(index);
-    await writeAtomic(join(temporary, "index.json"), indexBytes);
-    const expected = [
-      "index.json",
-      "master.m3u8",
-      ...renditionDescriptors.flatMap((rendition) => [
-        rendition.playlist,
-        rendition.init.identifier,
-        ...rendition.segments.map((segment) => segment.identifier),
-      ]),
-    ];
-    const actual = (await readdir(temporary)).sort();
-    if (actual.join("\0") !== [...expected].sort().join("\0"))
-      throw artifactError(temporary, "Artifact has missing or extra files");
-    const patches: QuiltPatch[] = [];
-    for (const identifier of expected) {
-      const inspected = await inspectAndHash(join(temporary, identifier));
-      patches.push({
-        identifier,
-        path: join(target, identifier),
-        ...inspected,
-      });
-    }
+    await atomicWriteFilePromise(
+      join(temporary, "master.m3u8"),
+      renderMasterPlaylist(descriptors),
+    );
     throwIfAborted(signal);
     await Effect.runPromise(promoteWorkspaceDirectory(temporary, target));
-    await writeAtomic(
-      join(generations, `${digest}.json`),
-      generationCheckpointBytes(digest, contentDigest, request, patches),
+    return await Effect.runPromise(
+      verifyArtifact(await buildArtifact(target, transcodeDigest, request)),
     );
-    const artifact: QuiltArtifact = {
-      generationDigest: digest,
-      rootPath: target,
-      indexPath: join(target, "index.json"),
-      indexBytes,
-      indexSha256: sha256Hex(indexBytes),
-      patchCount,
-      patches,
-      toolchain: request.prepared.toolchain,
-    };
-    return await Effect.runPromise(verifyArtifact(artifact));
   } catch (error) {
     await removeTree(temporary);
     throw error;
@@ -560,67 +454,48 @@ const finalizeUnsafe = async (
 
 export const finalizeTranscode = (
   request: FinalizeRequest,
-): Effect.Effect<QuiltArtifact, ArtifactValidationError | WorkspaceIoError> => {
-  const mapFailure = (
-    error: unknown,
-  ): ArtifactValidationError | WorkspaceIoError =>
-    error instanceof ArtifactValidationError ||
-    error instanceof WorkspaceIoError
-      ? error
-      : error instanceof Error &&
-          "code" in error &&
-          typeof error.code === "string" &&
-          [
-            "EACCES",
-            "EIO",
-            "EMFILE",
-            "ENFILE",
-            "ENOENT",
-            "ENOSPC",
-            "EROFS",
-          ].includes(error.code)
-        ? new WorkspaceIoError({
-            code: "WORKSPACE_IO",
-            phase: "workspace",
-            subject: basename(request.prepared.rootPath),
-            message: "Finalization workspace operation failed",
-          })
-        : artifactError(
-            basename(request.prepared.rootPath),
-            "Finalization failed",
-          );
-  return Effect.suspend(() => {
-    const configured = request.prepared.segmentTargetMs;
+): Effect.Effect<
+  TranscodeArtifact,
+  ArtifactValidationError | WorkspaceIoError
+> =>
+  Effect.suspend(() => {
     const concurrency = request.fileConcurrency ?? 4;
     if (
       !Number.isSafeInteger(concurrency) ||
       concurrency < 1 ||
-      concurrency > MAX_FILE_CONCURRENCY ||
-      configured < 6_000
+      concurrency > MAX_FILE_CONCURRENCY
     )
       return Effect.fail(
-        artifactError(
+        failure(
           "fileConcurrency",
           "File concurrency is outside the supported range",
         ),
       );
     return Effect.callback<
-      QuiltArtifact,
+      TranscodeArtifact,
       ArtifactValidationError | WorkspaceIoError
     >((resume, signal) => {
       const worker = finalizeUnsafe(request, concurrency, signal);
       void worker.then(
         (artifact) => resume(Effect.succeed(artifact)),
-        (error) => resume(Effect.fail(mapFailure(error))),
+        (error) =>
+          resume(
+            Effect.fail(
+              error instanceof ArtifactValidationError ||
+                error instanceof WorkspaceIoError
+                ? error
+                : failure(
+                    basename(request.prepared.rootPath),
+                    "Transcode finalization failed",
+                  ),
+            ),
+          ),
       );
-      // Interruption aborts the worker and joins cleanup before the workspace
-      // lock may be released.
-      return Effect.promise(async () => {
-        await worker.then(
+      return Effect.promise(() =>
+        worker.then(
           () => undefined,
           () => undefined,
-        );
-      });
+        ),
+      );
     });
   });
-};

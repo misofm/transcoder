@@ -62,7 +62,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     container:
-      image: ghcr.io/linuxserver/ffmpeg:8.1.2-cli-ls76@sha256:2e7000921be8de2704a4f27dfd3d988562697a346eaabb937a81046c306f0af7
+      image: ghcr.io/linuxserver/ffmpeg:8.1.2-cli-ls76@sha256:8e412a7a8bdbb65df95afced960f34ac1e7a8b90c17501b7c774053c08d18e25
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:

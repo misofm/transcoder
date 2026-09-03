@@ -26,7 +26,7 @@ export const renderMasterPlaylist = (
   for (const rendition of sorted) {
     lines.push(
       `#EXT-X-STREAM-INF:BANDWIDTH=${rendition.peakBandwidth},AVERAGE-BANDWIDTH=${rendition.averageBandwidth},CODECS="mp4a.40.2"`,
-      rendition.playlist,
+      rendition.playlist.identifier,
     );
   }
   return new TextEncoder().encode(`${lines.join("\n")}\n`);

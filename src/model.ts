@@ -1,6 +1,5 @@
-export const SCHEMA_ID = "miso.aac-transcode-quilt/1" as const;
 export const RENDITIONS = [
-  { id: "aac-096", nominalBitrate: 96_000 },
+  { id: "aac-96", nominalBitrate: 96_000 },
   { id: "aac-160", nominalBitrate: 160_000 },
   { id: "aac-256", nominalBitrate: 256_000 },
 ] as const;
@@ -9,9 +8,11 @@ export type RenditionId = (typeof RENDITIONS)[number]["id"];
 
 export interface TranscodeProfile {
   readonly segmentTargetMs?: number;
+  /** Optional consumer bound; it is not tied to any packaging format. */
+  readonly maxSegmentsPerRendition?: number;
 }
 
-export interface PrepareRequest {
+export interface TranscodeRequest {
   readonly inputPath: string;
   readonly workspacePath: string;
   readonly ffmpegPath: string;
@@ -19,11 +20,16 @@ export interface PrepareRequest {
   readonly profile?: TranscodeProfile;
   readonly fresh?: boolean;
   readonly recoverStaleLock?: boolean;
+  readonly fileConcurrency?: number;
 }
 
+/** @internal Preparation is an implementation checkpoint, not publication metadata. */
+export interface PrepareRequest
+  extends Omit<TranscodeRequest, "fileConcurrency"> {}
+
+/** @internal */
 export interface FinalizeRequest {
   readonly prepared: PreparedTranscode;
-  readonly recordingId: string;
   readonly fresh?: boolean;
   readonly fileConcurrency?: number;
 }
@@ -43,11 +49,8 @@ export interface ToolchainFingerprint {
 }
 
 export interface AudioMeasurement {
-  /** Null denotes the meter's canonical negative-infinity result for silence. */
   readonly integratedLoudnessCentiLufs: number | null;
-  /** Null denotes the meter's canonical negative-infinity result for silence. */
   readonly truePeakCentiDbtp: number | null;
-  /** Null denotes an all-zero decoded stream. */
   readonly samplePeakCentiDbfs: number | null;
 }
 
@@ -77,16 +80,16 @@ export interface PreparedTranscode {
 
 export interface FileDescriptor {
   readonly identifier: string;
+  readonly path: string;
+  readonly contentType: "application/vnd.apple.mpegurl" | "audio/mp4";
   readonly bytes: number;
   readonly sha256: string;
 }
 
-export interface SegmentDescriptor {
+export interface SegmentDescriptor extends FileDescriptor {
   readonly sequence: number;
-  readonly identifier: string;
   readonly durationMs: number;
-  readonly bytes: number;
-  readonly sha256: string;
+  readonly contentType: "audio/mp4";
 }
 
 export interface RenditionDescriptor {
@@ -97,39 +100,23 @@ export interface RenditionDescriptor {
   readonly peakBandwidth: number;
   readonly sampleRateHz: 44100 | 48000;
   readonly channels: 2;
-  readonly playlist: string;
+  readonly playlist: FileDescriptor;
   readonly init: FileDescriptor;
   readonly segments: readonly SegmentDescriptor[];
 }
 
-export interface QuiltIndex {
-  readonly schema: typeof SCHEMA_ID;
-  readonly recordingId: string;
-  readonly generation: string;
-  readonly masterPlaylist: "master.m3u8";
-  readonly segmentTargetMs: number;
-  readonly patchCount: number;
-  readonly renditions: readonly RenditionDescriptor[];
-}
-
-export interface QuiltPatch {
-  readonly identifier: string;
-  readonly path: string;
-  readonly bytes: number;
-  readonly sha256: string;
-}
-
-export interface QuiltArtifact {
-  readonly generationDigest: string;
+export interface TranscodeArtifact {
+  readonly transcodeDigest: string;
   readonly rootPath: string;
-  readonly indexPath: string;
-  readonly indexBytes: Uint8Array;
-  readonly indexSha256: string;
-  readonly patchCount: number;
-  readonly patches: readonly QuiltPatch[];
+  readonly segmentTargetMs: number;
+  readonly masterPlaylist: FileDescriptor;
+  /** Stable order: master, then each rendition's playlist, init, and segments. */
+  readonly files: readonly FileDescriptor[];
+  readonly renditions: readonly RenditionDescriptor[];
   readonly toolchain: ToolchainFingerprint;
+  readonly audio: PreparedAudioEvidence;
 }
 
-export interface VerifiedArtifact extends QuiltArtifact {
+export interface VerifiedArtifact extends TranscodeArtifact {
   readonly verified: true;
 }
