@@ -7,7 +7,6 @@ export type TranscodePhase =
   | "prepare"
   | "encode"
   | "validate"
-  | "encrypt"
   | "finalize"
   | "verify"
   | "workspace"
@@ -90,10 +89,6 @@ export class PlaylistValidationError extends Data.TaggedError(
 export class MediaValidationError extends Data.TaggedError(
   "MediaValidationError",
 )<FailureFields<"MEDIA_VALIDATION">> {}
-
-export class CryptoError extends Data.TaggedError("CryptoError")<
-  FailureFields<"CRYPTO">
-> {}
 
 export class ArtifactValidationError extends Data.TaggedError(
   "ArtifactValidationError",

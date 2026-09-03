@@ -13,7 +13,6 @@ import {
 import { ArtifactValidationError } from "../errors.js";
 import { validateMasterPlaylist } from "../hls/master.js";
 import { parsePlaintextMediaPlaylist } from "../hls/playlist.js";
-import { recoverPlaintextPlaylist } from "../hls/rewrite.js";
 import type { QuiltArtifact, QuiltPatch, VerifiedArtifact } from "../model.js";
 import { parseQuiltIndex } from "../schema.js";
 
@@ -164,13 +163,9 @@ const verifyUnsafe = async (
       throw failure(rendition.init.identifier, "Init descriptor mismatch");
     }
     const playlist = parsePlaintextMediaPlaylist(
-      recoverPlaintextPlaylist(
-        await readBounded(
-          join(artifact.rootPath, rendition.playlist),
-          MAX_PLAYLIST_BYTES,
-        ),
-        index.generation,
-        rendition.id,
+      await readBounded(
+        join(artifact.rootPath, rendition.playlist),
+        MAX_PLAYLIST_BYTES,
       ),
     );
     if (
@@ -189,11 +184,8 @@ const verifyUnsafe = async (
     }
     for (const segment of rendition.segments) {
       const patch = declared.get(segment.identifier);
-      if (
-        patch?.bytes !== segment.cipherBytes ||
-        patch.sha256 !== segment.ciphertextSha256
-      ) {
-        throw failure(segment.identifier, "Ciphertext descriptor mismatch");
+      if (patch?.bytes !== segment.bytes || patch.sha256 !== segment.sha256) {
+        throw failure(segment.identifier, "Segment descriptor mismatch");
       }
     }
   }

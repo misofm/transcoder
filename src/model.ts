@@ -6,16 +6,9 @@ export const RENDITIONS = [
 ] as const;
 
 export type RenditionId = (typeof RENDITIONS)[number]["id"];
-export type Network = "testnet" | "mainnet";
-
-export interface GenerationMaterial {
-  readonly generationNonce: Uint8Array;
-  readonly rootKey: Uint8Array;
-}
 
 export interface TranscodeProfile {
   readonly segmentTargetMs?: number;
-  readonly encryptionConcurrency?: number;
 }
 
 export interface PrepareRequest {
@@ -31,9 +24,8 @@ export interface PrepareRequest {
 export interface FinalizeRequest {
   readonly prepared: PreparedTranscode;
   readonly recordingId: string;
-  readonly network: Network;
   readonly fresh?: boolean;
-  readonly encryptionConcurrency?: number;
+  readonly fileConcurrency?: number;
 }
 
 export interface ToolchainFingerprint {
@@ -93,9 +85,8 @@ export interface SegmentDescriptor {
   readonly sequence: number;
   readonly identifier: string;
   readonly durationMs: number;
-  readonly plainBytes: number;
-  readonly cipherBytes: number;
-  readonly ciphertextSha256: string;
+  readonly bytes: number;
+  readonly sha256: string;
 }
 
 export interface RenditionDescriptor {
@@ -113,18 +104,11 @@ export interface RenditionDescriptor {
 
 export interface QuiltIndex {
   readonly schema: typeof SCHEMA_ID;
-  readonly network: Network;
   readonly recordingId: string;
   readonly generation: string;
   readonly masterPlaylist: "master.m3u8";
   readonly segmentTargetMs: number;
   readonly patchCount: number;
-  readonly encryption: {
-    readonly scheme: "hls-aes-128-cbc-hkdf/1";
-    readonly kdf: "hkdf-sha256";
-    readonly rootKeyBytes: 32;
-    readonly keyId: string;
-  };
   readonly renditions: readonly RenditionDescriptor[];
 }
 

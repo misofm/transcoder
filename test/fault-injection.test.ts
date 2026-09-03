@@ -13,12 +13,8 @@ import { join } from "node:path";
 
 import { Effect, Fiber } from "effect";
 
-import {
-  encryptFileAtomic,
-  finalizeTranscode,
-} from "../src/pipeline/finalize.js";
+import { copyFileAtomic, finalizeTranscode } from "../src/pipeline/finalize.js";
 import type { PreparedTranscode } from "../src/model.js";
-import { decryptSegment } from "../src/crypto/aes-cbc.js";
 import {
   acquireWorkspaceLockPromise,
   releaseWorkspaceLockPromise,
@@ -57,13 +53,14 @@ afterEach(async () =>
   ),
 );
 
-test("failed finalization zeroes the owned key and cannot promote partial output", async () => {
+test("failed finalization cannot promote partial output", async () => {
   const workspace = await mkdtemp(
     join(await temporaryRoot, "transcoder-fault-"),
   );
   roots.push(workspace);
   const rootPath = join(workspace, "plaintext", "a".repeat(64));
   await mkdir(rootPath, { recursive: true, mode: 0o700 });
+  await mkdir(join(workspace, "generations"), { mode: 0o700 });
   const prepared: PreparedTranscode = {
     ...preparedAudio,
     prepareDigest: "a".repeat(64),
@@ -86,17 +83,11 @@ test("failed finalization zeroes the owned key and cannot promote partial output
       sha256: "c".repeat(64),
     },
   };
-  const rootKey = new Uint8Array(32).fill(7);
-  const finalization = finalizeTranscode(
-    { prepared, recordingId: `0x${"01".repeat(32)}`, network: "testnet" },
-    {
-      generationNonce: new Uint8Array(32).fill(8),
-      rootKey,
-    },
-  );
-  expect(rootKey).toEqual(new Uint8Array(32).fill(7));
+  const finalization = finalizeTranscode({
+    prepared,
+    recordingId: `0x${"01".repeat(32)}`,
+  });
   await expect(Effect.runPromise(finalization)).rejects.toBeDefined();
-  expect(rootKey).toEqual(new Uint8Array(32));
   const generations = join(workspace, "generations");
   expect(
     (await readdir(generations)).every(
@@ -105,46 +96,57 @@ test("failed finalization zeroes the owned key and cannot promote partial output
   ).toBe(true);
 });
 
-test("segment encryption faults after every durable transition", async () => {
+test("segment copy faults after every durable transition", async () => {
   for (const transition of ["file-fsync", "rename", "parent-fsync"] as const) {
     const root = await mkdtemp(
       join(await temporaryRoot, "transcoder-segment-fault-"),
     );
     roots.push(root);
-    const plaintext = join(root, "plain.m4s");
-    const destination = join(root, "cipher.m4s");
-    await writeFile(plaintext, "complete fragment", { mode: 0o600 });
-    const key = new Uint8Array(16).fill(5);
+    const source = join(root, "source.m4s");
+    const destination = join(root, "copy.m4s");
+    await writeFile(source, "complete fragment", { mode: 0o600 });
     await expect(
-      encryptFileAtomic(
-        plaintext,
-        destination,
-        key,
-        0,
-        new AbortController().signal,
-        {
-          afterTransition: (current) => {
-            if (current === transition) throw new Error("injected crash");
-          },
+      copyFileAtomic(source, destination, new AbortController().signal, {
+        afterTransition: (current) => {
+          if (current === transition) throw new Error("injected crash");
         },
-      ),
+      }),
     ).rejects.toBeDefined();
     const destinationFile = Bun.file(destination);
     if (transition === "file-fsync") {
       expect(await destinationFile.exists()).toBe(false);
     } else {
-      expect(decryptSegment(await destinationFile.bytes(), key, 0)).toEqual(
-        new TextEncoder().encode("complete fragment"),
-      );
+      expect(await destinationFile.text()).toBe("complete fragment");
     }
     expect((await readdir(root)).some((name) => name.includes(".tmp-"))).toBe(
       false,
     );
-    key.fill(0);
   }
 });
 
-test("interrupted encryption joins cleanup before scope completion", async () => {
+test("segment copy rejects a source mutation before promotion", async () => {
+  const root = await mkdtemp(
+    join(await temporaryRoot, "transcoder-segment-mutation-"),
+  );
+  roots.push(root);
+  const source = join(root, "source.m4s");
+  const destination = join(root, "copy.m4s");
+  await writeFile(source, "complete fragment", { mode: 0o600 });
+  await expect(
+    copyFileAtomic(source, destination, new AbortController().signal, {
+      afterTransition: async (transition) => {
+        if (transition === "file-fsync")
+          await writeFile(source, "corrupt! fragment", { mode: 0o600 });
+      },
+    }),
+  ).rejects.toBeDefined();
+  expect(await Bun.file(destination).exists()).toBe(false);
+  expect((await readdir(root)).some((name) => name.includes(".tmp-"))).toBe(
+    false,
+  );
+});
+
+test("interrupted copy joins cleanup before scope completion", async () => {
   const workspace = await mkdtemp(
     join(await temporaryRoot, "transcoder-cancel-"),
   );
@@ -186,26 +188,17 @@ test("interrupted encryption joins cleanup before scope completion", async () =>
       sha256: "f".repeat(64),
     },
   };
-  const rootKey = new Uint8Array(32).fill(9);
   const fiber = Effect.runFork(
     withWorkspaceLock(workspace, "finalize", () =>
-      finalizeTranscode(
-        {
-          prepared,
-          recordingId: `0x${"02".repeat(32)}`,
-          network: "testnet",
-          encryptionConcurrency: 1,
-        },
-        {
-          generationNonce: new Uint8Array(32).fill(10),
-          rootKey,
-        },
-      ),
+      finalizeTranscode({
+        prepared,
+        recordingId: `0x${"02".repeat(32)}`,
+        fileConcurrency: 1,
+      }),
     ),
   );
   await new Promise((resolve) => setTimeout(resolve, 5));
   await Effect.runPromise(Fiber.interrupt(fiber));
-  expect(rootKey).toEqual(new Uint8Array(32));
   const generations = join(workspace, "generations");
   expect(
     (await readdir(generations)).every(

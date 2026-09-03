@@ -28,7 +28,6 @@ section {
   margin-bottom: 28px;
 }
 header p,
-.key-row p,
 .status-detail,
 footer {
   color: #999;
@@ -47,8 +46,7 @@ footer {
 }
 .drop-zone input,
 .drop-zone strong,
-.drop-zone small,
-.key-row > label {
+.drop-zone small {
   display: block;
 }
 .drop-zone input {
@@ -57,20 +55,6 @@ footer {
 .drop-zone small {
   margin-top: 4px;
   color: #999;
-}
-.key-row {
-  margin-top: 16px;
-}
-
-.key-control {
-  display: flex;
-  gap: 8px;
-  margin-top: 6px;
-}
-.key-control input {
-  min-width: 0;
-  flex: 1;
-  font-family: inherit;
 }
 button,
 input {

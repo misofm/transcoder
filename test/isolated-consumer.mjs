@@ -78,8 +78,12 @@ if (
     (file) =>
       file.startsWith("src/") ||
       file.startsWith("test/") ||
+      file.startsWith("dist/crypto/") ||
+      file.startsWith("dist/hls/rewrite.") ||
       file.endsWith(".map") ||
       (file.endsWith(".ts") && !file.endsWith(".d.ts")),
   )
 )
-  throw new Error("installed package leaked source, tests, or source maps");
+  throw new Error(
+    "installed package leaked source, tests, source maps, or removed crypto output",
+  );

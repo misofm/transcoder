@@ -10,18 +10,11 @@ export const canonicalIndexBytes = (index: QuiltIndex): Uint8Array => {
   assertQuiltIndex(index);
   const ordered: QuiltIndex = {
     schema: index.schema,
-    network: index.network,
     recordingId: index.recordingId,
     generation: index.generation,
     masterPlaylist: index.masterPlaylist,
     segmentTargetMs: index.segmentTargetMs,
     patchCount: index.patchCount,
-    encryption: {
-      scheme: index.encryption.scheme,
-      kdf: index.encryption.kdf,
-      rootKeyBytes: index.encryption.rootKeyBytes,
-      keyId: index.encryption.keyId,
-    },
     renditions: index.renditions.map((rendition) => ({
       id: rendition.id,
       codec: rendition.codec,
@@ -40,9 +33,8 @@ export const canonicalIndexBytes = (index: QuiltIndex): Uint8Array => {
         sequence: segment.sequence,
         identifier: segment.identifier,
         durationMs: segment.durationMs,
-        plainBytes: segment.plainBytes,
-        cipherBytes: segment.cipherBytes,
-        ciphertextSha256: segment.ciphertextSha256,
+        bytes: segment.bytes,
+        sha256: segment.sha256,
       })),
     })),
   };

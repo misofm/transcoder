@@ -1,9 +1,4 @@
 export * from "./artifact.js";
-export {
-  decodeRecordingId,
-  deriveRenditionKey,
-  deriveRootKeyId,
-} from "./crypto/hkdf.js";
 export * from "./errors.js";
 export * from "./model.js";
 export * from "./observer.js";
