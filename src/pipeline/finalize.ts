@@ -1,9 +1,4 @@
-import {
-  createCipheriv,
-  createDecipheriv,
-  createHash,
-  randomBytes,
-} from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { constants } from "node:fs";
 import {
   chmod,
@@ -19,25 +14,14 @@ import { basename, join } from "node:path";
 import { Effect } from "effect";
 
 import { canonicalIndexBytes, sha256Hex } from "../artifact.js";
-import {
-  CryptoError,
-  ArtifactValidationError,
-  WorkspaceIoError,
-} from "../errors.js";
-import { encryptedSize, implicitIv } from "../crypto/aes-cbc.js";
-import { deriveRenditionKey, deriveRootKeyId } from "../crypto/hkdf.js";
+import { ArtifactValidationError, WorkspaceIoError } from "../errors.js";
 import { calculateBandwidth } from "../hls/bandwidth.js";
 import { renderMasterPlaylist } from "../hls/master.js";
 import { parsePlaintextMediaPlaylist } from "../hls/playlist.js";
 import {
-  rewriteMediaPlaylist,
-  validateEncryptedMediaPlaylist,
-} from "../hls/rewrite.js";
-import {
   RENDITIONS,
   SCHEMA_ID,
   type FinalizeRequest,
-  type GenerationMaterial,
   type QuiltArtifact,
   type QuiltIndex,
   type QuiltPatch,
@@ -45,13 +29,15 @@ import {
 } from "../model.js";
 import { patchCountForSegments } from "../profile.js";
 import { parseQuiltIndex } from "../schema.js";
-import { assertNoSymlinkComponentsPromise } from "../workspace/atomic-file.js";
-import { atomicWriteFilePromise } from "../workspace/atomic-file.js";
+import {
+  assertNoSymlinkComponentsPromise,
+  atomicWriteFilePromise,
+} from "../workspace/atomic-file.js";
 import { promoteWorkspaceDirectory } from "../workspace/state.js";
 import { verifyArtifact } from "./verify.js";
 
-const MAX_SEGMENT_BYTES = 256 * 1024 * 1024;
-const MAX_ENCRYPTION_CONCURRENCY = 16;
+const MAX_ARTIFACT_FILE_BYTES = 256 * 1024 * 1024;
+const MAX_FILE_CONCURRENCY = 16;
 
 const throwIfAborted = (signal: AbortSignal): void => {
   if (signal.aborted)
@@ -66,24 +52,16 @@ const artifactError = (subject: string, message: string) =>
     message,
   });
 
-const cryptoError = (subject: string, message: string) =>
-  new CryptoError({
-    code: "CRYPTO",
-    phase: "encrypt",
-    subject,
-    message,
-  });
-
 const writeAtomic = async (path: string, bytes: Uint8Array): Promise<void> => {
   await atomicWriteFilePromise(path, bytes);
 };
 
-const removeEmptyTree = async (path: string): Promise<void> => {
+const removeTree = async (path: string): Promise<void> => {
   try {
     const entries = await readdir(path, { withFileTypes: true });
     for (const entry of entries) {
       const child = join(path, entry.name);
-      if (entry.isDirectory()) await removeEmptyTree(child);
+      if (entry.isDirectory()) await removeTree(child);
       else await unlink(child);
     }
     await rmdir(path);
@@ -94,24 +72,17 @@ const removeEmptyTree = async (path: string): Promise<void> => {
 
 const generationDigest = (
   request: FinalizeRequest,
-  material: GenerationMaterial,
+  contentDigest: string,
 ): string => {
   const hash = createHash("sha256");
   hash.update("miso.transcoder.generation/1\0");
-  hash.update(request.prepared.resultDigest, "utf8");
+  hash.update(contentDigest, "utf8");
   hash.update(request.recordingId, "utf8");
-  hash.update(request.network, "utf8");
-  hash.update(material.generationNonce);
-  hash.update(
-    deriveRootKeyId(
-      material.rootKey,
-      request.recordingId,
-      material.generationNonce,
-    ),
-    "utf8",
-  );
   return hash.digest("hex");
 };
+
+const generationIdentity = (digest: string): string =>
+  Buffer.from(digest, "hex").toString("base64url");
 
 const readBounded = async (
   path: string,
@@ -158,7 +129,7 @@ const inspectAndHash = async (
     if (
       !metadata.isFile() ||
       metadata.size < 1 ||
-      metadata.size > MAX_SEGMENT_BYTES
+      metadata.size > MAX_ARTIFACT_FILE_BYTES
     )
       throw new RangeError("patch outside bounds");
     const hash = createHash("sha256");
@@ -180,54 +151,73 @@ const inspectAndHash = async (
   }
 };
 
-export type SegmentEncryptionTransition =
-  | "file-fsync"
-  | "rename"
-  | "parent-fsync";
+const preparedContentDigest = async (
+  rootPath: string,
+  signal: AbortSignal,
+): Promise<string> => {
+  const identifiers: string[] = [];
+  for (const rendition of RENDITIONS) {
+    const playlistName = `${rendition.id}.m3u8`;
+    const playlist = parsePlaintextMediaPlaylist(
+      await readBounded(join(rootPath, playlistName), 1_048_576),
+    );
+    identifiers.push(
+      playlistName,
+      playlist.mapIdentifier,
+      ...playlist.segments.map((segment) => segment.identifier),
+    );
+  }
+  const hash = createHash("sha256");
+  hash.update("miso.transcoder.prepared-content/1\0");
+  for (const identifier of identifiers) {
+    throwIfAborted(signal);
+    const file = await inspectAndHash(join(rootPath, identifier));
+    hash.update(identifier, "utf8");
+    hash.update("\0");
+    hash.update(String(file.bytes), "utf8");
+    hash.update("\0");
+    hash.update(file.sha256, "utf8");
+  }
+  return hash.digest("hex");
+};
+
+export type FileCopyTransition = "file-fsync" | "rename" | "parent-fsync";
 
 /** @internal Exported only for durable-transition fault injection. */
-export const encryptFileAtomic = async (
-  plaintextPath: string,
+export const copyFileAtomic = async (
+  sourcePath: string,
   destinationPath: string,
-  key: Uint8Array,
-  sequence: number,
   signal: AbortSignal,
   hooks: {
     readonly afterTransition?: (
-      transition: SegmentEncryptionTransition,
+      transition: FileCopyTransition,
     ) => void | Promise<void>;
   } = {},
-): Promise<{
-  readonly plainBytes: number;
-  readonly cipherBytes: number;
-  readonly ciphertextSha256: string;
-}> => {
+): Promise<{ readonly bytes: number; readonly sha256: string }> => {
   throwIfAborted(signal);
   const input = await open(
-    plaintextPath,
+    sourcePath,
     constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0),
   );
   const metadata = await input.stat();
   if (
     !metadata.isFile() ||
     metadata.size < 1 ||
-    metadata.size > MAX_SEGMENT_BYTES
+    metadata.size > MAX_ARTIFACT_FILE_BYTES
   ) {
     await input.close();
-    throw new RangeError("segment size outside supported bounds");
+    throw new RangeError("source size outside supported bounds");
   }
   const temporary = `${destinationPath}.tmp-${process.pid}-${randomBytes(8).toString("hex")}`;
   let output: Awaited<ReturnType<typeof open>> | undefined;
   const hash = createHash("sha256");
-  let cipherBytes = 0;
-  let plainBytesRead = 0;
+  let copiedBytes = 0;
   try {
     output = await open(
       temporary,
       constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY,
       0o600,
     );
-    const cipher = createCipheriv("aes-128-cbc", key, implicitIv(sequence));
     const buffer = Buffer.allocUnsafe(64 * 1024);
     while (true) {
       throwIfAborted(signal);
@@ -238,20 +228,25 @@ export const encryptFileAtomic = async (
         null,
       );
       if (bytesRead === 0) break;
-      plainBytesRead += bytesRead;
-      if (plainBytesRead > metadata.size)
-        throw new RangeError("segment grew during encryption");
-      const encrypted = cipher.update(buffer.subarray(0, bytesRead));
-      if (encrypted.byteLength > 0) {
-        await output.write(encrypted);
-        hash.update(encrypted);
-        cipherBytes += encrypted.byteLength;
+      copiedBytes += bytesRead;
+      if (copiedBytes > metadata.size)
+        throw new RangeError("source grew during copy");
+      hash.update(buffer.subarray(0, bytesRead));
+      let written = 0;
+      while (written < bytesRead) {
+        const result = await output.write(
+          buffer,
+          written,
+          bytesRead - written,
+          null,
+        );
+        if (result.bytesWritten === 0)
+          throw new RangeError("destination accepted a short write");
+        written += result.bytesWritten;
       }
     }
-    const final = cipher.final();
-    await output.write(final);
-    hash.update(final);
-    cipherBytes += final.byteLength;
+    if (copiedBytes !== metadata.size)
+      throw new RangeError("source shrank during copy");
     await output.sync();
     await hooks.afterTransition?.("file-fsync");
   } catch (error) {
@@ -265,63 +260,13 @@ export const encryptFileAtomic = async (
     await output?.close().catch(() => undefined);
   }
   try {
-    if (cipherBytes !== encryptedSize(metadata.size))
-      throw new Error("CBC size invariant failed");
-    const encryptedInput = await open(temporary, constants.O_RDONLY);
-    const plainInput = await open(
-      plaintextPath,
-      constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0),
-    );
-    try {
-      const comparisonMetadata = await plainInput.stat();
-      if (
-        comparisonMetadata.dev !== metadata.dev ||
-        comparisonMetadata.ino !== metadata.ino ||
-        comparisonMetadata.size !== metadata.size
-      )
-        throw new Error("plaintext changed during encryption");
-      const decipher = createDecipheriv(
-        "aes-128-cbc",
-        key,
-        implicitIv(sequence),
-      );
-      const compare = async (decoded: Uint8Array): Promise<void> => {
-        const expected = Buffer.allocUnsafe(decoded.byteLength);
-        let offset = 0;
-        while (offset < expected.byteLength) {
-          const { bytesRead } = await plainInput.read(
-            expected,
-            offset,
-            expected.byteLength - offset,
-            null,
-          );
-          if (bytesRead === 0) throw new Error("decrypted segment is longer");
-          offset += bytesRead;
-        }
-        if (!Buffer.from(decoded).equals(expected))
-          throw new Error("CBC verification failed");
-        expected.fill(0);
-      };
-      const buffer = Buffer.allocUnsafe(64 * 1024);
-      while (true) {
-        throwIfAborted(signal);
-        const { bytesRead } = await encryptedInput.read(
-          buffer,
-          0,
-          buffer.byteLength,
-          null,
-        );
-        if (bytesRead === 0) break;
-        await compare(decipher.update(buffer.subarray(0, bytesRead)));
-      }
-      await compare(decipher.final());
-      const extra = Buffer.allocUnsafe(1);
-      if ((await plainInput.read(extra, 0, 1, null)).bytesRead !== 0)
-        throw new Error("decrypted segment is shorter");
-    } finally {
-      await encryptedInput.close();
-      await plainInput.close();
-    }
+    const copied = { bytes: copiedBytes, sha256: hash.digest("hex") };
+    const currentSource = await inspectAndHash(sourcePath);
+    if (
+      currentSource.bytes !== copied.bytes ||
+      currentSource.sha256 !== copied.sha256
+    )
+      throw new Error("source changed during copy");
     throwIfAborted(signal);
     await rename(temporary, destinationPath);
     await hooks.afterTransition?.("rename");
@@ -332,22 +277,46 @@ export const encryptFileAtomic = async (
     } finally {
       await parent.close();
     }
-    return {
-      plainBytes: metadata.size,
-      cipherBytes,
-      ciphertextSha256: hash.digest("hex"),
-    };
+    return copied;
   } catch (error) {
     await unlink(temporary).catch(() => undefined);
     throw error;
   }
 };
 
+const generationCheckpointBytes = (
+  digest: string,
+  contentDigest: string,
+  request: FinalizeRequest,
+  patches: readonly QuiltPatch[],
+): Uint8Array =>
+  new TextEncoder().encode(
+    `${JSON.stringify(
+      {
+        schema: "miso.transcoder-generation/1",
+        generationDigest: digest,
+        prepareDigest: request.prepared.prepareDigest,
+        resultDigest: request.prepared.resultDigest,
+        contentDigest,
+        generation: generationIdentity(digest),
+        recordingId: request.recordingId,
+        toolchainSha256: request.prepared.toolchain.sha256,
+        patches: patches.map(({ identifier, bytes, sha256 }) => ({
+          identifier,
+          bytes,
+          sha256,
+        })),
+      },
+      null,
+      2,
+    )}\n`,
+  );
+
 const loadExistingArtifact = async (
   rootPath: string,
   digest: string,
+  contentDigest: string,
   request: FinalizeRequest,
-  material: GenerationMaterial,
 ): Promise<QuiltArtifact | undefined> => {
   try {
     const indexBytes = await readBounded(
@@ -356,22 +325,13 @@ const loadExistingArtifact = async (
     );
     const index = parseQuiltIndex(indexBytes);
     if (
-      index.generation !==
-        Buffer.from(material.generationNonce).toString("base64url") ||
-      index.recordingId !== request.recordingId ||
-      index.network !== request.network ||
-      index.encryption.keyId !==
-        deriveRootKeyId(
-          material.rootKey,
-          request.recordingId,
-          material.generationNonce,
-        )
-    ) {
+      index.generation !== generationIdentity(digest) ||
+      index.recordingId !== request.recordingId
+    )
       throw artifactError(
         rootPath,
-        "Existing generation does not match supplied generation material",
+        "Existing generation does not match this finalization request",
       );
-    }
     const identifiers = [
       "index.json",
       "master.m3u8",
@@ -385,12 +345,7 @@ const loadExistingArtifact = async (
     for (const identifier of identifiers) {
       const path = join(rootPath, identifier);
       const inspected = await inspectAndHash(path);
-      patches.push({
-        identifier,
-        path,
-        bytes: inspected.bytes,
-        sha256: inspected.sha256,
-      });
+      patches.push({ identifier, path, ...inspected });
     }
     const artifact: QuiltArtifact = {
       generationDigest: digest,
@@ -408,13 +363,13 @@ const loadExistingArtifact = async (
         join(rootPath, "..", `${digest}.json`),
         4_194_304,
       );
-      const expectedCheckpoint = generationCheckpointBytes(
+      const expected = generationCheckpointBytes(
         digest,
+        contentDigest,
         request,
-        material,
         verified.patches,
       );
-      if (!Buffer.from(checkpoint).equals(Buffer.from(expectedCheckpoint)))
+      if (!Buffer.from(checkpoint).equals(Buffer.from(expected)))
         throw artifactError(
           rootPath,
           "Existing generation checkpoint does not match artifact bytes",
@@ -433,281 +388,182 @@ const loadExistingArtifact = async (
   }
 };
 
-const generationCheckpointBytes = (
-  digest: string,
-  request: FinalizeRequest,
-  material: GenerationMaterial,
-  patches: readonly QuiltPatch[],
-): Uint8Array =>
-  new TextEncoder().encode(
-    `${JSON.stringify(
-      {
-        schema: "miso.transcoder-generation/1",
-        generationDigest: digest,
-        prepareDigest: request.prepared.prepareDigest,
-        resultDigest: request.prepared.resultDigest,
-        generationNonce: Buffer.from(material.generationNonce).toString(
-          "base64url",
-        ),
-        keyId: deriveRootKeyId(
-          material.rootKey,
-          request.recordingId,
-          material.generationNonce,
-        ),
-        toolchainSha256: request.prepared.toolchain.sha256,
-        patches: patches.map(({ identifier, bytes, sha256 }) => ({
-          identifier,
-          bytes,
-          sha256,
-        })),
-      },
-      null,
-      2,
-    )}\n`,
-  );
-
 const finalizeUnsafe = async (
   request: FinalizeRequest,
-  material: GenerationMaterial,
   concurrency: number,
   signal: AbortSignal,
 ): Promise<QuiltArtifact> => {
   throwIfAborted(signal);
-  if (
-    material.rootKey.byteLength !== 32 ||
-    material.generationNonce.byteLength !== 32
-  ) {
-    throw cryptoError(
-      "generationMaterial",
-      "Root key and generation nonce must each contain exactly 32 bytes",
+  const contentDigest = await preparedContentDigest(
+    request.prepared.rootPath,
+    signal,
+  );
+  const digest = generationDigest(request, contentDigest);
+  const generations = join(
+    request.prepared.rootPath,
+    "..",
+    "..",
+    "generations",
+  );
+  await assertNoSymlinkComponentsPromise(join(generations, ".."));
+  await mkdir(generations, { recursive: true, mode: 0o700 });
+  await chmod(generations, 0o700);
+  await assertNoSymlinkComponentsPromise(generations);
+  const target = join(generations, digest);
+  const existing = await loadExistingArtifact(
+    target,
+    digest,
+    contentDigest,
+    request,
+  );
+  if (existing !== undefined) {
+    if (request.fresh === true)
+      throw artifactError(target, "Fresh finalization requires a new request");
+    await writeAtomic(
+      join(generations, `${digest}.json`),
+      generationCheckpointBytes(
+        digest,
+        contentDigest,
+        request,
+        existing.patches,
+      ),
     );
+    return existing;
   }
-  const ownedRootKey = Uint8Array.from(material.rootKey);
+  const temporary = join(
+    generations,
+    `.tmp-${process.pid}-${randomBytes(8).toString("hex")}`,
+  );
+  await mkdir(temporary, { mode: 0o700 });
+  const renditionDescriptors: RenditionDescriptor[] = [];
   try {
-    const digest = generationDigest(request, material);
-    const generations = join(
-      request.prepared.rootPath,
-      "..",
-      "..",
-      "generations",
-    );
-    await assertNoSymlinkComponentsPromise(join(generations, ".."));
-    await mkdir(generations, { recursive: true, mode: 0o700 });
-    await chmod(generations, 0o700);
-    await assertNoSymlinkComponentsPromise(generations);
-    const target = join(generations, digest);
-    const nonce = Buffer.from(material.generationNonce).toString("base64url");
-    for (const entry of await readdir(generations, { withFileTypes: true })) {
-      if (
-        !entry.isDirectory() ||
-        !/^[0-9a-f]{64}$/u.test(entry.name) ||
-        entry.name === digest
-      )
-        continue;
-      const priorIndex = parseQuiltIndex(
-        await readBounded(
-          join(generations, entry.name, "index.json"),
-          4_194_304,
+    for (const rendition of RENDITIONS) {
+      const playlistName = `${rendition.id}.m3u8`;
+      const playlistBytes = await readBounded(
+        join(request.prepared.rootPath, playlistName),
+        1_048_576,
+      );
+      const playlist = parsePlaintextMediaPlaylist(playlistBytes);
+      if (playlist.mapIdentifier !== `${rendition.id}-init.mp4`)
+        throw artifactError(playlistName, "Unexpected init identifier");
+      throwIfAborted(signal);
+      const records = await Effect.runPromise(
+        Effect.forEach(
+          playlist.segments,
+          (segment) =>
+            Effect.tryPromise({
+              try: async () => ({
+                sequence: segment.sequence,
+                identifier: segment.identifier,
+                durationMs: segment.durationMs,
+                ...(await copyFileAtomic(
+                  join(request.prepared.rootPath, segment.identifier),
+                  join(temporary, segment.identifier),
+                  signal,
+                )),
+              }),
+              catch: () =>
+                artifactError(
+                  segment.identifier,
+                  "Segment copy or verification failed",
+                ),
+            }),
+          { concurrency },
         ),
       );
-      if (priorIndex.generation === nonce)
-        throw artifactError(
-          "generationNonce",
-          "Generation nonce was already used by another generation",
-        );
+      const init = await copyFileAtomic(
+        join(request.prepared.rootPath, playlist.mapIdentifier),
+        join(temporary, playlist.mapIdentifier),
+        signal,
+      );
+      await writeAtomic(join(temporary, playlistName), playlistBytes);
+      const bandwidth = calculateBandwidth(records);
+      renditionDescriptors.push({
+        id: rendition.id,
+        codec: "mp4a.40.2",
+        nominalBitrate: rendition.nominalBitrate,
+        ...bandwidth,
+        sampleRateHz: request.prepared.sampleRateHz,
+        channels: 2,
+        playlist: playlistName,
+        init: { identifier: playlist.mapIdentifier, ...init },
+        segments: records,
+      });
     }
-    const existing = await loadExistingArtifact(
-      target,
-      digest,
-      request,
-      material,
+    const segmentCounts = renditionDescriptors.map(
+      (rendition) => rendition.segments.length,
     );
-    if (existing !== undefined) {
-      if (request.fresh === true)
-        throw artifactError(
-          target,
-          "Fresh finalization requires unused generation material",
-        );
-      await writeAtomic(
-        join(generations, `${digest}.json`),
-        generationCheckpointBytes(digest, request, material, existing.patches),
+    if (!segmentCounts.every((count) => count === segmentCounts[0]))
+      throw artifactError("renditions", "Segment counts are not aligned");
+    if ((await preparedContentDigest(temporary, signal)) !== contentDigest)
+      throw artifactError(
+        request.prepared.rootPath,
+        "Prepared content changed during finalization",
       );
-      return existing;
+    const patchCount = patchCountForSegments(segmentCounts[0] ?? 0);
+    const index: QuiltIndex = {
+      schema: SCHEMA_ID,
+      recordingId: request.recordingId,
+      generation: generationIdentity(digest),
+      masterPlaylist: "master.m3u8",
+      segmentTargetMs: request.prepared.segmentTargetMs,
+      patchCount,
+      renditions: renditionDescriptors,
+    };
+    const masterBytes = renderMasterPlaylist(renditionDescriptors);
+    await writeAtomic(join(temporary, "master.m3u8"), masterBytes);
+    const indexBytes = canonicalIndexBytes(index);
+    await writeAtomic(join(temporary, "index.json"), indexBytes);
+    const expected = [
+      "index.json",
+      "master.m3u8",
+      ...renditionDescriptors.flatMap((rendition) => [
+        rendition.playlist,
+        rendition.init.identifier,
+        ...rendition.segments.map((segment) => segment.identifier),
+      ]),
+    ];
+    const actual = (await readdir(temporary)).sort();
+    if (actual.join("\0") !== [...expected].sort().join("\0"))
+      throw artifactError(temporary, "Artifact has missing or extra files");
+    const patches: QuiltPatch[] = [];
+    for (const identifier of expected) {
+      const inspected = await inspectAndHash(join(temporary, identifier));
+      patches.push({
+        identifier,
+        path: join(target, identifier),
+        ...inspected,
+      });
     }
-    const temporary = join(
-      generations,
-      `.tmp-${process.pid}-${randomBytes(8).toString("hex")}`,
+    throwIfAborted(signal);
+    await Effect.runPromise(promoteWorkspaceDirectory(temporary, target));
+    await writeAtomic(
+      join(generations, `${digest}.json`),
+      generationCheckpointBytes(digest, contentDigest, request, patches),
     );
-    await mkdir(temporary, { mode: 0o700 });
-    const renditionDescriptors: RenditionDescriptor[] = [];
-    try {
-      for (const rendition of RENDITIONS) {
-        const playlistName = `${rendition.id}.m3u8`;
-        const playlistBytes = await readBounded(
-          join(request.prepared.rootPath, playlistName),
-          1_048_576,
-        );
-        const playlist = parsePlaintextMediaPlaylist(playlistBytes);
-        if (playlist.mapIdentifier !== `${rendition.id}-init.mp4`)
-          throw artifactError(playlistName, "Unexpected init identifier");
-        throwIfAborted(signal);
-        const key = deriveRenditionKey(
-          ownedRootKey,
-          request.recordingId,
-          material.generationNonce,
-          rendition.id,
-        );
-        try {
-          const records = await Effect.runPromise(
-            Effect.forEach(
-              playlist.segments,
-              (segment) =>
-                Effect.tryPromise({
-                  try: async () => {
-                    const encrypted = await encryptFileAtomic(
-                      join(request.prepared.rootPath, segment.identifier),
-                      join(temporary, segment.identifier),
-                      key,
-                      segment.sequence,
-                      signal,
-                    );
-                    return {
-                      sequence: segment.sequence,
-                      identifier: segment.identifier,
-                      durationMs: segment.durationMs,
-                      ...encrypted,
-                    } as const;
-                  },
-                  catch: () =>
-                    cryptoError(
-                      segment.identifier,
-                      "Segment encryption or verification failed",
-                    ),
-                }),
-              { concurrency },
-            ),
-          );
-          const initBytes = await readBounded(
-            join(request.prepared.rootPath, playlist.mapIdentifier),
-            MAX_SEGMENT_BYTES,
-          );
-          await writeAtomic(join(temporary, playlist.mapIdentifier), initBytes);
-          const rewritten = rewriteMediaPlaylist(
-            playlistBytes,
-            nonce,
-            rendition.id,
-          );
-          validateEncryptedMediaPlaylist(rewritten, nonce, rendition.id);
-          await writeAtomic(join(temporary, playlistName), rewritten);
-          const bandwidth = calculateBandwidth(records);
-          renditionDescriptors.push({
-            id: rendition.id,
-            codec: "mp4a.40.2",
-            nominalBitrate: rendition.nominalBitrate,
-            ...bandwidth,
-            sampleRateHz: request.prepared.sampleRateHz,
-            channels: 2,
-            playlist: playlistName,
-            init: {
-              identifier: playlist.mapIdentifier,
-              bytes: initBytes.byteLength,
-              sha256: sha256Hex(initBytes),
-            },
-            segments: records,
-          });
-        } finally {
-          key.fill(0);
-        }
-      }
-      const segmentCounts = renditionDescriptors.map(
-        (rendition) => rendition.segments.length,
-      );
-      if (!segmentCounts.every((count) => count === segmentCounts[0]))
-        throw artifactError("renditions", "Segment counts are not aligned");
-      const patchCount = patchCountForSegments(segmentCounts[0] ?? 0);
-      const index: QuiltIndex = {
-        schema: SCHEMA_ID,
-        network: request.network,
-        recordingId: request.recordingId,
-        generation: Buffer.from(material.generationNonce).toString("base64url"),
-        masterPlaylist: "master.m3u8",
-        segmentTargetMs: request.prepared.segmentTargetMs,
-        patchCount,
-        encryption: {
-          scheme: "hls-aes-128-cbc-hkdf/1",
-          kdf: "hkdf-sha256",
-          rootKeyBytes: 32,
-          keyId: deriveRootKeyId(
-            ownedRootKey,
-            request.recordingId,
-            material.generationNonce,
-          ),
-        },
-        renditions: renditionDescriptors,
-      };
-      const masterBytes = renderMasterPlaylist(renditionDescriptors);
-      await writeAtomic(join(temporary, "master.m3u8"), masterBytes);
-      const indexBytes = canonicalIndexBytes(index);
-      await writeAtomic(join(temporary, "index.json"), indexBytes);
-      const expected = [
-        "index.json",
-        "master.m3u8",
-        ...renditionDescriptors.flatMap((rendition) => [
-          rendition.playlist,
-          rendition.init.identifier,
-          ...rendition.segments.map((segment) => segment.identifier),
-        ]),
-      ];
-      const actual = (await readdir(temporary)).sort();
-      if (actual.join("\0") !== [...expected].sort().join("\0"))
-        throw artifactError(temporary, "Artifact has missing or extra files");
-      const patches: QuiltPatch[] = [];
-      for (const identifier of expected) {
-        const inspected = await inspectAndHash(join(temporary, identifier));
-        patches.push({
-          identifier,
-          path: join(target, identifier),
-          bytes: inspected.bytes,
-          sha256: inspected.sha256,
-        });
-      }
-      throwIfAborted(signal);
-      await Effect.runPromise(promoteWorkspaceDirectory(temporary, target));
-      await writeAtomic(
-        join(generations, `${digest}.json`),
-        generationCheckpointBytes(digest, request, material, patches),
-      );
-      const artifact: QuiltArtifact = {
-        generationDigest: digest,
-        rootPath: target,
-        indexPath: join(target, "index.json"),
-        indexBytes,
-        indexSha256: sha256Hex(indexBytes),
-        patchCount,
-        patches,
-        toolchain: request.prepared.toolchain,
-      };
-      return await Effect.runPromise(verifyArtifact(artifact));
-    } catch (error) {
-      await removeEmptyTree(temporary);
-      throw error;
-    }
-  } finally {
-    ownedRootKey.fill(0);
+    const artifact: QuiltArtifact = {
+      generationDigest: digest,
+      rootPath: target,
+      indexPath: join(target, "index.json"),
+      indexBytes,
+      indexSha256: sha256Hex(indexBytes),
+      patchCount,
+      patches,
+      toolchain: request.prepared.toolchain,
+    };
+    return await Effect.runPromise(verifyArtifact(artifact));
+  } catch (error) {
+    await removeTree(temporary);
+    throw error;
   }
 };
 
 export const finalizeTranscode = (
   request: FinalizeRequest,
-  material: GenerationMaterial,
-): Effect.Effect<
-  QuiltArtifact,
-  CryptoError | ArtifactValidationError | WorkspaceIoError
-> => {
+): Effect.Effect<QuiltArtifact, ArtifactValidationError | WorkspaceIoError> => {
   const mapFailure = (
     error: unknown,
-  ): CryptoError | ArtifactValidationError | WorkspaceIoError =>
-    error instanceof CryptoError ||
+  ): ArtifactValidationError | WorkspaceIoError =>
     error instanceof ArtifactValidationError ||
     error instanceof WorkspaceIoError
       ? error
@@ -731,56 +587,34 @@ export const finalizeTranscode = (
           })
         : artifactError(
             basename(request.prepared.rootPath),
-            "Finalization failed without exposing sensitive details",
+            "Finalization failed",
           );
   return Effect.suspend(() => {
     const configured = request.prepared.segmentTargetMs;
-    const concurrency = request.encryptionConcurrency ?? 4;
+    const concurrency = request.fileConcurrency ?? 4;
     if (
       !Number.isSafeInteger(concurrency) ||
       concurrency < 1 ||
-      concurrency > MAX_ENCRYPTION_CONCURRENCY ||
+      concurrency > MAX_FILE_CONCURRENCY ||
       configured < 6_000
     )
       return Effect.fail(
         artifactError(
-          "encryptionConcurrency",
-          "Encryption concurrency is outside the supported range",
-        ),
-      );
-    if (
-      material.rootKey.byteLength !== 32 ||
-      material.generationNonce.byteLength !== 32
-    )
-      return Effect.fail(
-        cryptoError(
-          "generationMaterial",
-          "Root key and generation nonce must each contain exactly 32 bytes",
+          "fileConcurrency",
+          "File concurrency is outside the supported range",
         ),
       );
     return Effect.callback<
       QuiltArtifact,
-      CryptoError | ArtifactValidationError | WorkspaceIoError
+      ArtifactValidationError | WorkspaceIoError
     >((resume, signal) => {
-      // Snapshot validated inputs before the first asynchronous boundary, then
-      // consume the caller's working key immediately.
-      const ownedMaterial: GenerationMaterial = {
-        generationNonce: Uint8Array.from(material.generationNonce),
-        rootKey: Uint8Array.from(material.rootKey),
-      };
-      material.rootKey.fill(0);
-      const worker = finalizeUnsafe(
-        request,
-        ownedMaterial,
-        concurrency,
-        signal,
-      ).finally(() => ownedMaterial.rootKey.fill(0));
+      const worker = finalizeUnsafe(request, concurrency, signal);
       void worker.then(
         (artifact) => resume(Effect.succeed(artifact)),
         (error) => resume(Effect.fail(mapFailure(error))),
       );
-      // Interruption aborts the worker and waits for its cleanup/commit
-      // reconciliation before the surrounding workspace lock may be released.
+      // Interruption aborts the worker and joins cleanup before the workspace
+      // lock may be released.
       return Effect.promise(async () => {
         await worker.then(
           () => undefined,
@@ -788,5 +622,5 @@ export const finalizeTranscode = (
         );
       });
     });
-  }).pipe(Effect.ensuring(Effect.sync(() => material.rootKey.fill(0))));
+  });
 };

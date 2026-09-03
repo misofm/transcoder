@@ -172,21 +172,16 @@ const validateRendition = (
         "sequence",
         "identifier",
         "durationMs",
-        "plainBytes",
-        "cipherBytes",
-        "ciphertextSha256",
+        "bytes",
+        "sha256",
       ]) &&
       segment.sequence === index &&
       segment.identifier ===
         `${expected.id}-${String(index).padStart(5, "0")}.m4s` &&
       safeInteger(segment.durationMs, 1, 10_000) &&
-      safeInteger(segment.plainBytes, 1) &&
-      safeInteger(segment.cipherBytes, 16) &&
-      (segment.cipherBytes as number) % 16 === 0 &&
-      segment.cipherBytes ===
-        16 * (Math.floor((segment.plainBytes as number) / 16) + 1) &&
-      typeof segment.ciphertextSha256 === "string" &&
-      SHA256.test(segment.ciphertextSha256);
+      safeInteger(segment.bytes, 1) &&
+      typeof segment.sha256 === "string" &&
+      SHA256.test(segment.sha256);
     if (!valid || seen.has(segment.identifier as string)) return false;
     seen.add(segment.identifier as string);
     return true;
@@ -202,13 +197,11 @@ export const assertQuiltIndex: (
   if (
     !exactKeys(value, [
       "schema",
-      "network",
       "recordingId",
       "generation",
       "masterPlaylist",
       "segmentTargetMs",
       "patchCount",
-      "encryption",
       "renditions",
     ])
   ) {
@@ -216,7 +209,6 @@ export const assertQuiltIndex: (
   }
   if (
     index.schema !== SCHEMA_ID ||
-    (index.network !== "testnet" && index.network !== "mainnet") ||
     typeof index.recordingId !== "string" ||
     !OBJECT_ID.test(index.recordingId) ||
     typeof index.generation !== "string" ||
@@ -224,17 +216,6 @@ export const assertQuiltIndex: (
     index.masterPlaylist !== "master.m3u8" ||
     !safeInteger(index.segmentTargetMs, 1_000, 10_000) ||
     !safeInteger(index.patchCount, 11, MAX_PATCHES) ||
-    typeof index.encryption !== "object" ||
-    index.encryption === null ||
-    !exactKeys(index.encryption, ["scheme", "kdf", "rootKeyBytes", "keyId"]) ||
-    (index.encryption as Record<string, unknown>).scheme !==
-      "hls-aes-128-cbc-hkdf/1" ||
-    (index.encryption as Record<string, unknown>).kdf !== "hkdf-sha256" ||
-    (index.encryption as Record<string, unknown>).rootKeyBytes !== 32 ||
-    typeof (index.encryption as Record<string, unknown>).keyId !== "string" ||
-    !SHA256.test(
-      (index.encryption as Record<string, unknown>).keyId as string,
-    ) ||
     !Array.isArray(index.renditions) ||
     index.renditions.length !== RENDITIONS.length
   )
@@ -244,7 +225,7 @@ export const assertQuiltIndex: (
     generationBytes.byteLength !== 32 ||
     generationBytes.toString("base64url") !== index.generation
   ) {
-    throw new TypeError("generation nonce is not canonical base64url");
+    throw new TypeError("generation identity is not canonical base64url");
   }
   index.renditions.forEach((rendition, position) => {
     const expected = RENDITIONS[position];

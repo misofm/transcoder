@@ -6,21 +6,18 @@
   "additionalProperties": false,
   "required": [
     "schema",
-    "network",
     "recordingId",
     "generation",
     "masterPlaylist",
     "segmentTargetMs",
     "patchCount",
-    "encryption",
     "renditions"
   ],
   "properties": {
     "schema": { "const": "miso.aac-transcode-quilt/1" },
-    "network": { "enum": ["testnet", "mainnet"] },
     "recordingId": { "$ref": "#/$defs/objectId" },
     "generation": {
-      "description": "Canonical unpadded base64url encoding of a 32-byte nonce.",
+      "description": "Canonical unpadded base64url encoding of the deterministic 32-byte generation digest.",
       "type": "string",
       "pattern": "^[A-Za-z0-9_-]{43}$"
     },
@@ -34,17 +31,6 @@
       "type": "integer",
       "minimum": 11,
       "maximum": 666
-    },
-    "encryption": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["scheme", "kdf", "rootKeyBytes", "keyId"],
-      "properties": {
-        "scheme": { "const": "hls-aes-128-cbc-hkdf/1" },
-        "kdf": { "const": "hkdf-sha256" },
-        "rootKeyBytes": { "const": 32 },
-        "keyId": { "$ref": "#/$defs/sha256" }
-      }
     },
     "renditions": {
       "type": "array",
@@ -83,14 +69,7 @@
     "segment": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "sequence",
-        "identifier",
-        "durationMs",
-        "plainBytes",
-        "cipherBytes",
-        "ciphertextSha256"
-      ],
+      "required": ["sequence", "identifier", "durationMs", "bytes", "sha256"],
       "properties": {
         "sequence": {
           "type": "integer",
@@ -103,18 +82,12 @@
           "minimum": 1,
           "maximum": 10000
         },
-        "plainBytes": {
+        "bytes": {
           "type": "integer",
           "minimum": 1,
           "maximum": 9007199254740991
         },
-        "cipherBytes": {
-          "type": "integer",
-          "minimum": 16,
-          "maximum": 9007199254740991,
-          "multipleOf": 16
-        },
-        "ciphertextSha256": { "$ref": "#/$defs/sha256" }
+        "sha256": { "$ref": "#/$defs/sha256" }
       }
     },
     "rendition": {
@@ -160,7 +133,7 @@
         "segments": {
           "type": "array",
           "minItems": 1,
-          "maxItems": 660,
+          "maxItems": 219,
           "items": { "$ref": "#/$defs/segment" }
         }
       }

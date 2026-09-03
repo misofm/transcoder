@@ -1,5 +1,5 @@
 export interface BandwidthSegment {
-  readonly cipherBytes: number;
+  readonly bytes: number;
   readonly durationMs: number;
 }
 
@@ -15,13 +15,13 @@ export const calculateBandwidth = (
   let totalDuration = 0n;
   let peak = 0n;
   for (const segment of segments) {
-    if (!Number.isSafeInteger(segment.cipherBytes) || segment.cipherBytes < 1) {
-      throw new RangeError("invalid ciphertext size");
+    if (!Number.isSafeInteger(segment.bytes) || segment.bytes < 1) {
+      throw new RangeError("invalid segment size");
     }
     if (!Number.isSafeInteger(segment.durationMs) || segment.durationMs < 1) {
       throw new RangeError("invalid segment duration");
     }
-    const bytes = BigInt(segment.cipherBytes);
+    const bytes = BigInt(segment.bytes);
     const duration = BigInt(segment.durationMs);
     totalBytes += bytes;
     totalDuration += duration;

@@ -20,7 +20,7 @@
     <main>
       <header>
         <h1>Quilt player</h1>
-        <p>Local verifier and audio player. No files or keys are uploaded.</p>
+        <p>Local verifier and audio player. No files are uploaded.</p>
       </header>
 
       <section class="workbench" aria-labelledby="setup-title">
@@ -40,29 +40,6 @@
             patches.</small
           >
         </label>
-
-        <div class="key-row">
-          <label for="root-key">Disposable root key</label>
-          <div class="key-control">
-            <input
-              id="root-key"
-              type="password"
-              inputmode="text"
-              autocomplete="off"
-              autocapitalize="off"
-              spellcheck="false"
-              maxlength="64"
-              placeholder="64 lowercase hexadecimal characters"
-            />
-            <button id="toggle-key" type="button" aria-label="Show root key">
-              Show
-            </button>
-          </div>
-          <p>
-            Used only in this page’s memory. The field is cleared after the key
-            is imported.
-          </p>
-        </div>
 
         <button class="primary-action" id="open-button" type="button" disabled>
           Verify &amp; open
@@ -96,10 +73,6 @@
             <dd id="segment-count"></dd>
           </div>
           <div>
-            <dt>Network</dt>
-            <dd id="network"></dd>
-          </div>
-          <div>
             <dt>Index SHA-256</dt>
             <dd id="index-hash"></dd>
           </div>
@@ -115,8 +88,7 @@
 
     <footer>
       <p>
-        Developer audition only. This page does not implement production key
-        authorization or publication.
+        Developer audition only. This page does not publish the selected Quilt.
       </p>
     </footer>
   </body>

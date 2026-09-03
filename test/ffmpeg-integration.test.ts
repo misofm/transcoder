@@ -17,8 +17,6 @@ import { Effect } from "effect";
 
 import { Transcoder } from "../src/pipeline/service.js";
 import { TranscoderNodeLive } from "../src/node.js";
-import { deriveRenditionKey } from "../src/crypto/hkdf.js";
-import { decryptSegment } from "../src/crypto/aes-cbc.js";
 import { parseQuiltIndex } from "../src/schema.js";
 import { parsePlaintextMediaPlaylist } from "../src/hls/playlist.js";
 
@@ -121,35 +119,15 @@ test("real FFmpeg creates one aligned three-rendition plaintext ladder", async (
     ).toBe(true);
   }
   const recordingId = `0x${"01".repeat(32)}`;
-  const generationNonce = Uint8Array.from(
-    { length: 32 },
-    (_, index) => 255 - index,
-  );
-  const rootKey = Uint8Array.from({ length: 32 }, (_, index) => index);
-  const keys = new Map(
-    ["aac-096", "aac-160", "aac-256"].map((id) => [
-      id,
-      deriveRenditionKey(
-        rootKey,
-        recordingId,
-        generationNonce,
-        id as "aac-096",
-      ),
-    ]),
-  );
   const artifact = await Effect.runPromise(
     Effect.gen(function* () {
       const transcoder = yield* Transcoder;
-      return yield* transcoder.finalize(
-        { prepared, recordingId, network: "testnet" },
-        {
-          generationNonce,
-          rootKey,
-        },
-      );
+      return yield* transcoder.finalize({
+        prepared,
+        recordingId,
+      });
     }).pipe(Effect.provide(TranscoderNodeLive)),
   );
-  expect(rootKey).toEqual(new Uint8Array(32));
   const verified = await Effect.runPromise(
     Effect.gen(function* () {
       const transcoder = yield* Transcoder;
@@ -182,38 +160,18 @@ test("real FFmpeg creates one aligned three-rendition plaintext ladder", async (
       "./fixtures/linuxserver-ffmpeg-8.1.2.golden.json",
       import.meta.url,
     );
-    expect(await readFile(goldenUrl, "utf8")).toBe(golden);
+    if (process.env["MISO_UPDATE_GOLDEN"] === "1")
+      await writeFile(goldenUrl, golden);
+    else expect(await readFile(goldenUrl, "utf8")).toBe(golden);
   }
-  const verificationRootKey = Uint8Array.from(
-    { length: 32 },
-    (_, index) => index,
-  );
-  try {
-    for (const rendition of index.renditions) {
-      const key = deriveRenditionKey(
-        verificationRootKey,
-        recordingId,
-        generationNonce,
-        rendition.id,
+  for (const rendition of index.renditions) {
+    for (const segment of rendition.segments) {
+      expect(
+        await Bun.file(join(artifact.rootPath, segment.identifier)).bytes(),
+      ).toEqual(
+        await Bun.file(join(prepared.rootPath, segment.identifier)).bytes(),
       );
-      try {
-        for (const segment of rendition.segments) {
-          const decrypted = decryptSegment(
-            await Bun.file(join(artifact.rootPath, segment.identifier)).bytes(),
-            key,
-            segment.sequence,
-          );
-          expect(decrypted).toEqual(
-            await Bun.file(join(prepared.rootPath, segment.identifier)).bytes(),
-          );
-          decrypted.fill(0);
-        }
-      } finally {
-        key.fill(0);
-      }
     }
-  } finally {
-    verificationRootKey.fill(0);
   }
   const checkpointPath = join(
     workspacePath,
@@ -221,7 +179,6 @@ test("real FFmpeg creates one aligned three-rendition plaintext ladder", async (
     `${artifact.generationDigest}.json`,
   );
   await unlink(checkpointPath);
-  const resumedRootKey = Uint8Array.from({ length: 32 }, (_, index) => index);
   const resumed = await Effect.runPromise(
     Effect.gen(function* () {
       const transcoder = yield* Transcoder;
@@ -232,67 +189,40 @@ test("real FFmpeg creates one aligned three-rendition plaintext ladder", async (
         ffprobePath,
       });
       expect(cachedPrepare.prepareDigest).toBe(prepared.prepareDigest);
-      return yield* transcoder.finalize(
-        { prepared: cachedPrepare, recordingId, network: "testnet" },
-        {
-          generationNonce,
-          rootKey: resumedRootKey,
-        },
-      );
+      return yield* transcoder.finalize({
+        prepared: cachedPrepare,
+        recordingId,
+      });
     }).pipe(Effect.provide(TranscoderNodeLive)),
   );
   expect(resumed.generationDigest).toBe(artifact.generationDigest);
-  expect(resumedRootKey).toEqual(new Uint8Array(32));
   expect(await Bun.file(checkpointPath).exists()).toBe(true);
-  const wrongRootKey = new Uint8Array(32).fill(99);
   await expect(
     Effect.runPromise(
       Effect.gen(function* () {
         const transcoder = yield* Transcoder;
-        return yield* transcoder.finalize(
-          { prepared, recordingId, network: "testnet" },
-          { generationNonce, rootKey: wrongRootKey },
-        );
+        return yield* transcoder.finalize({
+          prepared,
+          recordingId,
+          fresh: true,
+        });
       }).pipe(Effect.provide(TranscoderNodeLive)),
     ),
   ).rejects.toBeDefined();
-  expect(wrongRootKey).toEqual(new Uint8Array(32));
   const correctCheckpoint = await readFile(checkpointPath);
   await writeFile(checkpointPath, "tampered\n");
-  const checkpointKey = Uint8Array.from({ length: 32 }, (_, index) => index);
   await expect(
     Effect.runPromise(
       Effect.gen(function* () {
         const transcoder = yield* Transcoder;
-        return yield* transcoder.finalize(
-          { prepared, recordingId, network: "testnet" },
-          {
-            generationNonce,
-            rootKey: checkpointKey,
-          },
-        );
+        return yield* transcoder.finalize({
+          prepared,
+          recordingId,
+        });
       }).pipe(Effect.provide(TranscoderNodeLive)),
     ),
   ).rejects.toBeDefined();
-  expect(checkpointKey).toEqual(new Uint8Array(32));
   await writeFile(checkpointPath, correctCheckpoint);
-  const reusedNonceKey = Uint8Array.from({ length: 32 }, (_, index) => index);
-  await expect(
-    Effect.runPromise(
-      Effect.gen(function* () {
-        const transcoder = yield* Transcoder;
-        return yield* transcoder.finalize(
-          { prepared, recordingId, network: "mainnet" },
-          {
-            generationNonce,
-            rootKey: reusedNonceKey,
-          },
-        );
-      }).pipe(Effect.provide(TranscoderNodeLive)),
-    ),
-  ).rejects.toBeDefined();
-  expect(reusedNonceKey).toEqual(new Uint8Array(32));
-
   const server = createServer(async (request, response) => {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
     if (url.pathname === "/player.html") {
@@ -338,26 +268,6 @@ test("real FFmpeg creates one aligned three-rendition plaintext ladder", async (
         "content-length": body.byteLength,
       });
       response.end(Buffer.from(body));
-      return;
-    }
-    if (url.pathname === "/key.external") {
-      if (
-        url.searchParams.get("generation") !==
-        Buffer.from(generationNonce).toString("base64url")
-      ) {
-        response.writeHead(404).end();
-        return;
-      }
-      const key = keys.get(url.searchParams.get("rendition") ?? "");
-      if (key === undefined) {
-        response.writeHead(404).end();
-        return;
-      }
-      response.writeHead(200, {
-        "content-type": "application/octet-stream",
-        "content-length": key.byteLength,
-      });
-      response.end(key);
       return;
     }
     const identifier = url.pathname.slice(1);
@@ -461,17 +371,10 @@ test("real FFmpeg creates one aligned three-rendition plaintext ladder", async (
         const audition = await browser.newPage();
         await audition.goto(`http://127.0.0.1:${address.port}/quilt-player/`);
         await audition.locator("#quilt-input").setInputFiles(artifact.rootPath);
-        await audition
-          .locator("#root-key")
-          .fill(
-            Buffer.from(
-              Uint8Array.from({ length: 32 }, (_, index) => index),
-            ).toString("hex"),
-          );
         await audition.locator("#open-button").click();
         await audition.locator("#deck:not([hidden])").waitFor();
         expect(await audition.locator("#status-label").textContent()).toBe(
-          "Verified and unlocked",
+          "Verified and ready",
         );
         await audition
           .locator("audio")
@@ -504,7 +407,6 @@ test("real FFmpeg creates one aligned three-rendition plaintext ladder", async (
         error === undefined ? resolve() : reject(error),
       ),
     );
-    for (const key of keys.values()) key.fill(0);
   }
   for (const identifier of [
     index.renditions[0]!.init.identifier,

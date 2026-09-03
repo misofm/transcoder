@@ -26,9 +26,8 @@ const renditions = RENDITIONS.map(
         sequence: 0,
         identifier: `${profile.id}-00000.m4s`,
         durationMs: 6000,
-        plainBytes: 16,
-        cipherBytes: 32,
-        ciphertextSha256: hash,
+        bytes: 32,
+        sha256: hash,
       },
     ],
   }),
@@ -36,18 +35,11 @@ const renditions = RENDITIONS.map(
 
 const index: QuiltIndex = {
   schema: SCHEMA_ID,
-  network: "testnet",
   recordingId: `0x${hash}`,
   generation: "A".repeat(43),
   masterPlaylist: "master.m3u8",
   segmentTargetMs: 6000,
   patchCount: 11,
-  encryption: {
-    scheme: "hls-aes-128-cbc-hkdf/1",
-    kdf: "hkdf-sha256",
-    rootKeyBytes: 32,
-    keyId: hash,
-  },
   renditions,
 };
 

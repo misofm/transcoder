@@ -44,7 +44,7 @@ test("FFmpeg conformance uses one digest-pinned reference image", async () => {
   );
 });
 
-test("the library contract keeps external key custody outside the Quilt", async () => {
+test("the library contract is plaintext and has no key custody", async () => {
   const readme = await readFile(
     new URL("../README.md", import.meta.url),
     "utf8",
@@ -54,10 +54,12 @@ test("the library contract keeps external key custody outside the Quilt", async 
     "utf8",
   );
   for (const documentation of [readme, contract]) {
-    expect(documentation).not.toMatch(/keySeal|key\.seal|sealPlaintextBytes/u);
+    expect(documentation).not.toMatch(
+      /keySeal|key\.seal|sealPlaintextBytes|rootKey|key\.external|AES|HKDF/u,
+    );
   }
-  expect(readme).toContain("External key custody");
-  expect(contract).toContain("key.external");
+  expect(readme).toContain("plaintext");
+  expect(contract).toContain("MUST NOT contain `#EXT-X-KEY`");
 });
 
 const sourceFiles = async (root: string): Promise<ReadonlyArray<string>> => {

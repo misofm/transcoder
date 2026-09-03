@@ -4,7 +4,6 @@ import * as Path from "effect/Path";
 
 import type {
   ArtifactValidationError,
-  CryptoError,
   InvalidRequestError,
   StaleWorkspaceError,
   WorkspaceIoError,
@@ -14,7 +13,6 @@ import { StaleWorkspaceError as StaleWorkspaceFailure } from "../errors.js";
 import { Ffmpeg } from "../ffmpeg/service.js";
 import type {
   FinalizeRequest,
-  GenerationMaterial,
   PrepareRequest,
   QuiltArtifact,
   VerifiedArtifact,
@@ -35,10 +33,7 @@ import {
 } from "./prepare.js";
 import { verifyArtifact } from "./verify.js";
 
-export type FinalizeError =
-  | CryptoError
-  | ArtifactValidationError
-  | WorkspaceIoError;
+export type FinalizeError = ArtifactValidationError | WorkspaceIoError;
 export type VerifyError = ArtifactValidationError;
 export type CleanupError =
   | InvalidRequestError
@@ -52,7 +47,6 @@ export interface TranscoderService {
   ) => Effect.Effect<import("../model.js").PreparedTranscode, PrepareError>;
   readonly finalize: (
     request: FinalizeRequest,
-    material: GenerationMaterial,
   ) => Effect.Effect<QuiltArtifact, FinalizeError | PrepareError>;
   readonly verify: (
     artifact: QuiltArtifact,
@@ -88,39 +82,25 @@ export const TranscoderLive = Layer.effect(
           "prepare",
           prepareTranscode(request).pipe(Effect.provideService(Ffmpeg, ffmpeg)),
         ),
-      finalize: (request, material) => {
+      finalize: (request) => {
         const workspacePath = path.join(request.prepared.rootPath, "..", "..");
-        return Effect.suspend(() => {
-          if (
-            material.rootKey.byteLength !== 32 ||
-            material.generationNonce.byteLength !== 32
-          )
-            return finalizeTranscode(request, material);
-          const ownedMaterial: GenerationMaterial = {
-            generationNonce: Uint8Array.from(material.generationNonce),
-            rootKey: Uint8Array.from(material.rootKey),
-          };
-          material.rootKey.fill(0);
-          return around(
-            "finalize",
-            withWorkspaceLock(workspacePath, "finalize", () =>
-              cleanupWorkspaceTemporaries(workspacePath).pipe(
-                Effect.andThen(verifyPreparedTranscode(request.prepared)),
-                Effect.provideService(Ffmpeg, ffmpeg),
-                Effect.andThen(finalizeTranscode(request, ownedMaterial)),
-                Effect.tap((artifact) =>
-                  writeWorkspaceState(workspacePath, {
-                    schema: "miso.transcoder-workspace/1",
-                    prepareDigest: request.prepared.prepareDigest,
-                    generationDigest: artifact.generationDigest,
-                  }),
-                ),
+        return around(
+          "finalize",
+          withWorkspaceLock(workspacePath, "finalize", () =>
+            cleanupWorkspaceTemporaries(workspacePath).pipe(
+              Effect.andThen(verifyPreparedTranscode(request.prepared)),
+              Effect.provideService(Ffmpeg, ffmpeg),
+              Effect.andThen(finalizeTranscode(request)),
+              Effect.tap((artifact) =>
+                writeWorkspaceState(workspacePath, {
+                  schema: "miso.transcoder-workspace/1",
+                  prepareDigest: request.prepared.prepareDigest,
+                  generationDigest: artifact.generationDigest,
+                }),
               ),
             ),
-          ).pipe(
-            Effect.ensuring(Effect.sync(() => ownedMaterial.rootKey.fill(0))),
-          );
-        }).pipe(Effect.ensuring(Effect.sync(() => material.rootKey.fill(0))));
+          ),
+        );
       },
       verify: (artifact) => around("verify", verifyArtifact(artifact)),
       cleanupPrepared: (prepared) => {
